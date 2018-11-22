@@ -234,7 +234,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         '''
         self._check_signal_dimension_equals_one()
         if not isinstance(signal_range, tuple):
-            raise AttribureError('signal_range not recognized:'
+            raise AttributeError('signal_range not recognized:'
                                  'must be a tuple!')
 
         if len(signal_range) != 2:
@@ -306,7 +306,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         extrapolation_size = total_size-eax.size
         if extrapolation_size < 0:
-            raise AttribureError("total_size is less than spectral axis size")
+            raise AttributeError("total_size is less than spectral axis size")
 
         spc = self.power_law_extrapolation(window_size,
                                            extrapolation_size,
@@ -426,7 +426,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         ------
         ValueError
             If both `n` and `t` are undefined (None).
-        AttribureError
+        AttributeError
             If the beam_energy or the collection semi-angle are not defined in
             metadata.
 
@@ -476,7 +476,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                  self.axes_manager.navigation_shape):
                 zlp = zlp.integrate1D(axis.index_in_axes_manager)
         elif zlp is None and (full_output or iterations > 1):
-            raise AttribureError("Please define the zlp parameter when "
+            raise AttributeError("Please define the zlp parameter when "
                                  "full output or iterations > 1 are selected.")
         zlp = self._check_adapt_map_input(zlp)
         n = self._check_adapt_map_input(n)

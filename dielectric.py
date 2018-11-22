@@ -185,7 +185,7 @@ class ModifiedCDF(hs.signals.DielectricFunction, SignalMixin):
         elif plasmon_energy is not None and nat is None:
             k = 8*(np.pi*plasmon_energy**2)**-1
         else:
-            raise AttribureError("Either nat or plasmon_energy should be given,"
+            raise AttributeError("Either nat or plasmon_energy should be given,"
                                  " just one of them, not both parameters.")
 
         axis = self.axes_manager.signal_axes[0]
