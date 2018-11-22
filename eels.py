@@ -299,7 +299,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         eax = self.axes_manager.signal_axes[0]
 
         if type(total_size) is float:
-            total_size = int(round(total_size/eax.scale))
+            offset = self.axes_manager[-1].offset - self.axes_manager[-1].scale
+            total_size = int(round((total_size-offset)/eax.scale))
 
         if type(window_size) is float:
             window_size = int(round(window_size/eax.scale))
