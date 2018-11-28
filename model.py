@@ -11,6 +11,68 @@ import numpy as np
 from dielectric import ModifiedCDF
 from eels import  ModifiedEELS
 
+def fourier_exp_convolution(ssd, zlp):
+    '''
+    Using Poisson distribution statistics to simulate the effect of plural
+    scattering; starting from an input single-scattering distribution (SSD) and
+    zero-loss peak (ZLP) models, we use the exponential formula from Egerton
+    (see eq. 4.8, pp 233). This is implemented using FFTs as the product of the
+    exponential of the SSD and the ZLP. Proper care should be taken of the shift
+    of the energy axis and the normalization by the ZLP intensity. The ratio
+    between the SSD and ZLP intensities sets the simulated mean-free-path.
+
+    Note that because FEC uses FFT, care should be taken to ensure the input
+    SSD and ZLP decay smoothly to zero at both ends of the energy-loss axis.
+    The algorithm also assumes both signals start at the same energy-loss value
+    and have the same scale, but not necessarily the same number of channels.
+
+    Parameters
+    ----------
+    ssd : signal1D
+     A signal containing the SSD, for instance a spectrum obtained from a
+     dielectric function after calling "get_relativistic_spectrum".
+    zlp : signal1D
+     A signal containing the ZLP, for instance a model gaussian function with
+     fixed width and intensity.
+
+    Returns
+    -------
+    eels : signal1D
+     A signal representing the plural scattering spectrum corresponding to the
+     input SSD and ZLP. Fourier-log deconvolution can be applied to this signal
+     to obtain an estimate of the SSD;
+     >>> ssd_estimate = eels.fourier_log_deconvolution(zlp)
+
+    References
+    ----------
+    R.F. Egerton "EELS in the electron microscope" 2011, Springer.
+    '''
+    eels = ssd.deepcopy()
+    axis = ssd.axes_manager[-1]
+    ones_like_navi = np.ones(ssd.axes_manager._navigation_shape_in_array)
+
+    tsize = (2*axis.size)
+
+    # preload time-shift
+    cdata = np.exp(-2j*np.pi*axis.offset/axis.scale *\
+                   np.fft.fftfreq(tsize)*ones_like_navi[...,None])
+
+    # preload ZLP integral
+    I0 = zlp.integrate1D(-1).data[..., None]
+
+    # The FFTs are done with 2 times energy-loss axis size
+    kwfft = {'n':tsize, 'axis':axis.index_in_array}
+    cdata = np.exp(cdata/I0*np.fft.fft(ssd.data, **kwfft)) *\
+                   cdata*np.fft.fft(zlp.data, **kwfft)
+    cdata = np.fft.ifft(cdata, **kwfft).real
+
+    eels.data = cdata
+    eels.get_dimensions_from_data()
+
+    eels.data = np.roll(eels.data, -int(axis.offset/axis.scale), -1)
+    eels.crop_signal1D(None, axis.size)
+    return eels
+
 def kk_fourier(im):
     """
     The energy axis is the last one.
