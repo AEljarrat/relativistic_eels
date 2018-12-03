@@ -633,5 +633,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
          Average of the chi-square test score.
         """
         chi2 = (sig.data - self.data)**2 / self.data**2
+        chi2 = np.nan_to_num(chi2)
         a_min, a_max = np.percentile(chi2, p), np.percentile(chi2, 100-p)
         return np.clip(chi2, a_min, a_max).mean()
