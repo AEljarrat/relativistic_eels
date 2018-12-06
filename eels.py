@@ -729,15 +729,33 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         get_relativistic_spectrum, _check_adapt_map_input
 
         """
-        # for the KKT
-        def _kkt(e, im):
-            re = np.zeros_like(im)
-            esize = len(e)
+
+        def _kkt(imdata):
+            """
+            Multidimensional Kramers-Kronig Transform using FFT. In this one,
+            the imaginary data is padded with zeros up to double its size to
+            avoid the wrap-around problem. Note also that the energy axis is
+            taken to be the last one.
+
+            Parameters
+            ----------
+            imdata : ndarray
+             Energy-loss function, the imaginary part of the inverse dielectric
+             function, with a negative sign.
+
+            Returns
+            -------
+            redata : ndarray
+             Kramers-Kronig transform of the energy-loss function, the real part
+             of the inverse dielectric function, with a positive sign.
+            """
+            esize = imdata.shape[-1]
+            ids = (slice(None),) * (imdata.ndim-1) + (slice(None, esize),)
             dsize = 2 * esize
-            q = - 2 * np.fft.fft(im, dsize, -1).imag / dsize
-            q[..., :esize] *= -1.
+            q = - 2 * np.fft.fft(imdata, dsize, -1).imag / dsize
+            q[ids] *= -1.
             q = np.fft.fft(q, axis=-1)
-            return q[..., :esize].real + 1.
+            return q[ids].real + 1
 
         # Constants and units, electron mass, beam energy and collection angle
         me = constants.value(
@@ -791,23 +809,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         # copy the spectrum, EELS to update every iteration
         eels = self.deepcopy()
-        ssd  = self.deepcopy()
-        ssd.crop_signal1D(*ssd_range)
-
-        # prepare the output dielectric function
-        eps = ssd._deepcopy_with_new_data(
-                                         np.zeros_like(ssd.data, np.complex128))
-        eps.set_signal_type("DielectricFunction")
-        eps.metadata.General.title = (self.metadata.General.title +
-                                      'KKA dielectric function')
-        if eps.tmp_parameters.has_item('filename'):
-            eps.tmp_parameters.filename = (
-                self.tmp_parameters.filename +
-                '_CDF_after_Kramers_Kronig_transform')
-
-        from dielectric import ModifiedCDF
-        eps = ModifiedCDF(eps)
-        eps_corr = eps.deepcopy()
 
         # progressbar support
         if show_progressbar is None:
@@ -837,13 +838,16 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
             # extract SSD using the Fourier-log deconvolution
             ssd = eels.fourier_log_deconvolution(zlp)
+
+
             ssd.remove_negative_intensity(inplace=True)
             ssd.crop_signal1D(*ssd_range)
             ssd.data += 1e-6
             if ssd_range[1] is None:
                 ssd.hanning_taper()
             else:
-                ssd = ssd.power_law_extrapolation_until(5., ssd_range[1],
+                Efin = float(self.axes_manager[-1].high_value)
+                ssd = ssd.power_law_extrapolation_until(5., Efin,
                                                  fix_neg_r=True, add_noise=True)
 
             # create energy-loss axis
@@ -851,12 +855,11 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             energy = axis.axis.copy()
 
             # Calculation of the ELF by normalization of the SSD
-            ELF = ssd.data / \
-                            (np.log(1 + (beta * tgt / energy) ** 2)* axis.scale)
+            ssd.data /= (np.log(1 + (beta * tgt / energy) ** 2) * axis.scale)
 
             if refractive_loop:
                 # normalize using the refractive index.
-                K = (ELF / energy).sum(axis = axis.index_in_array) * axis.scale
+                K = (ssd.data/energy).sum(axis=axis.index_in_array)*axis.scale
                 K = (K / (np.pi / 2) / (1 - 1. / n.data ** 2))
                 # Calculate the thickness only if possible and required
                 if full_output or iterations > 1:
@@ -865,14 +868,17 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             else:
                 # normalize using the thickness
                 K = t.data * Izlp.data / (332.5 * ke)
-            ELF = ELF / K[..., None] if len(self) != 1 else ELF / K
+            ssd.data = ssd.data/K[..., None] if len(self) != 1 else ssd.data/K
 
             # Kramers-Kronig transform
-            eps.data = _kkt(energy, ELF) + 1j*ELF
+            # prepare the output dielectric function
+            from dielectric import ModifiedCDF
+            eps = ssd._deepcopy_with_new_data( _kkt(ssd.data) + 1j * ssd.data )
             eps.data =  eps.data / (eps.data.real**2.+eps.data.imag**2.)
+            eps = ModifiedCDF(eps)
+            del eels, ssd # free memory!
 
-            del eels, ssd, ELF # free memory
-
+            eps_corr = eps.deepcopy()
             if average and (eps.axes_manager.navigation_dimension > 0):
                 eps_corr.data[:] = eps.data.mean(
                                    eps.axes_manager.navigation_indices_in_array,
@@ -924,6 +930,12 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 #    scorr.gaussian_filter(fsmooth)
 
                 # Apply correction
+                # debug macro!
+                #import ipdb; import matplotlib.pyplot as plt
+                #def plots(some_signal):
+                #    some_signal.plot()
+                #    plt.pause(1)
+                #ipdb.set_trace()
                 eels = self - scorr
                 eels.remove_negative_intensity(inplace=True)
 
