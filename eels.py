@@ -615,6 +615,341 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         else:
             return eps
 
+    def relativistic_kramers_kronig_zlp(self,
+                                        zlp=None,
+                                        n=None,
+                                        t=None,
+                                        delta=0.9,
+                                        fsmooth=None,
+                                        iterations=20,
+                                        chi2_target=1e-4,
+                                        zlp_range=None,
+                                        ssd_range=(0.5, None),
+                                        average=False,
+                                        full_output=True,
+                                        show_progressbar=None,
+                                        *args,
+                                        **kwargs):
+        r"""Calculate the complex dielectric function from a single scattering
+        distribution (SSD) using the Kramers-Kronig relations and a relativistic
+        correction for thin slab geometry.
+
+        The input SSD should be and EELSSpectrum instance, containing only
+        inelastic scattering information (elastic and plural scattering
+        deconvolved). The dielectric information is obtained by normalization of
+        the inelastic scattering using the elastic scattering intensity and
+        either refractive index or thickness information.
+
+        A full complex dielectric function (CDF) is obtained by Kramers-Kronig
+        transform, solved using FFT as in `kramers_kronig_analysis`. This inital
+        guess for the CDF is improved in an iterative loop, devised to
+        approximately subtract the relativistic contribution supposing an
+        unoxidized planar surface.
+
+        The loop runs until a chi-square target has been achieved or for a
+        maximum number of iterations. This behavior can be modified using the
+        parameters below. This method does not account for instrumental and
+        finite-size effects.
+
+        Note: either refractive index or thickness (`n` or `t`) are required.
+        If both are None or if both are provided an exception is raised. Many
+        input types are accepted for zlp, n and t parameters, which are parsed
+        using `self._check_adapt_map_input`, see the documentation therein for
+        more information.
+
+        Parameters
+        ----------
+        zlp: EELSModel
+            ZLP model containing a Voigt component to fit the zlp.
+        n: {None, number, ndarray, Signal}
+            The medium refractive index. Used for normalization of the
+            SSD to obtain the energy loss function. If given the thickness
+            is estimated and returned. It is only required when `t` is None.
+        t: {None, number, ndarray, Signal}
+            The sample thickness in nm. Used for normalization of the
+            SSD to obtain the energy loss function. It is only required when
+            `n` is None.
+        delta : {None, float}
+            Optionally apply a fractional limit to the relativistic correction
+            in order to improve stability. Can be None, if no limit is desired.
+            A value of around 0.9 ensures the correction is never larger than
+            the original EELS signal, producing a negative spectral region.
+        fsmooth : {None, float}
+            Optionally apply a gaussian filter to the relativistic correction
+            in order to eliminate high-frequency noise. The cut-off is set in
+            the energy-loss scale, e.g. fsmooth = 1.5 (eV).
+        iterations: {None, int}
+            Number of the iterations for the internal loop to remove the
+            relativistic contribution. If None, the loop runs until a chi-square
+            target has been achieved (see below).
+        chi2_target : float
+            The average chi-square test score is measured in each iteration, and
+            the reconstruction loop terminates when the target score is reached.
+            See `_chi2_score` for more information.
+        average : bool
+            If True, use the average of the obtained dielectric functions over
+            the navigation dimensions to calculate the relativistic correction.
+            False by default, should only be used when analyzing spectra from a
+            homogenous sample, as only one dielectric function is retrieved.
+            This switch has no effect if only one spectrum is being analyzed.
+        full_output : bool
+            If True, return a dictionary that contains the estimated
+            thickness if `t` is None and the estimated relativistic correction
+            if `iterations` > 1.
+
+        Returns
+        -------
+        eps: DielectricFunction instance
+            The complex dielectric function results,
+
+                .. math::
+                    \epsilon = \epsilon_1 + i*\epsilon_2,
+
+            contained in an DielectricFunction instance.
+        output: Dictionary (optional)
+            A dictionary of optional outputs with the following keys:
+
+            ``thickness``
+                The estimated thickness in nm calculated by normalization of
+                the corrected spectrum (only when `t` is None).
+
+            ``relativistic correction``
+               The estimated relativistic correction at the final iteration.
+
+        Raises
+        ------
+        ValueError
+            If both `n` and `t` are undefined (None).
+        AttributeError
+            If the beam_energy or the collection semi-angle are not defined in
+            metadata.
+
+        See also
+        --------
+        get_relativistic_spectrum, _check_adapt_map_input
+
+        """
+        # for the KKT
+        def _kkt(e, im):
+            re = np.zeros_like(im)
+            esize = len(e)
+            dsize = 2 * esize
+            q = - 2 * np.fft.fft(im, dsize, -1).imag / dsize
+            q[..., :esize] *= -1.
+            q = np.fft.fft(q, axis=-1)
+            return q[..., :esize].real + 1.
+
+        # Constants and units, electron mass, beam energy and collection angle
+        me = constants.value(
+            'electron mass energy equivalent in MeV') * 1e3  # keV
+        try:
+            e0 = self.metadata.Acquisition_instrument.TEM.beam_energy
+        except BaseException:
+            raise AttributeError("Please define the beam energy."
+                                 "You can do this e.g. by using the "
+                                 "set_microscope_parameters method")
+        try:
+            beta = self.metadata.Acquisition_instrument.TEM.Detector.\
+                EELS.collection_angle
+        except BaseException:
+            raise AttributeError("Please define the collection semi-angle. "
+                                 "You can do this e.g. by using the "
+                                 "set_microscope_parameters method")
+
+        # these parameters should agree with the navigation dimensions
+        ZLPcomponent = zlp.components.Voigt
+        Izlp = self._check_adapt_map_input(ZLPcomponent.area.map['values'])
+        n = self._check_adapt_map_input(n)
+        t = self._check_adapt_map_input(t)
+        for name in ['Izlp', 'n', 't']:
+            parameter = eval(name)
+            if isinstance(parameter, ValueError):
+                parameter.args = (parameter.args[0]+name,)
+                raise parameter
+
+        # select refractive or thickness loop
+        if n is None and t is None:
+            raise ValueError('Thickness and refractive index undefined.'
+                             'Please provide one of them.')
+        elif n is not None and t is not None:
+            raise ValueError('Thickness and refractive index both defined.'
+                             'Please provide only one of them.')
+        elif n is not None:
+            refractive_loop = True
+            if (Izlp is not None) and (full_output is True or iterations > 1):
+                t = self._get_navigation_signal().T
+        elif t is not None:
+            refractive_loop = False
+            if Izlp is None:
+                raise ValueError('Zero-loss intensity is needed for thickness '
+                                 'normalization. Provide also parameter zlp')
+
+        # Kinetic definitions
+        ke = e0 * (1 + e0 / 2. / me) / (1 + e0 / me) ** 2
+        tgt = e0 * (2 * me + e0) / (me + e0)
+        rk0 = 2590 * (1 + e0 / me) * np.sqrt(2 * ke / me)
+
+        # copy the spectrum, EELS to update every iteration
+        eels = self.deepcopy()
+        ssd  = self.deepcopy()
+        ssd.crop_signal1D(*ssd_range)
+
+        # prepare the output dielectric function
+        eps = ssd._deepcopy_with_new_data(
+                                         np.zeros_like(ssd.data, np.complex128))
+        eps.set_signal_type("DielectricFunction")
+        eps.metadata.General.title = (self.metadata.General.title +
+                                      'KKA dielectric function')
+        if eps.tmp_parameters.has_item('filename'):
+            eps.tmp_parameters.filename = (
+                self.tmp_parameters.filename +
+                '_CDF_after_Kramers_Kronig_transform')
+
+        from dielectric import ModifiedCDF
+        eps = ModifiedCDF(eps)
+        eps_corr = eps.deepcopy()
+
+        # progressbar support
+        if show_progressbar is None:
+            show_progressbar = preferences.General.show_progressbar
+        pbar = progressbar(total = iterations,
+                           desc = '1.00e+30',
+                           disable=not show_progressbar)
+
+        # initialize iteration control
+        io = 0
+        chi2 = chi2_target*1e3
+        while (io < iterations) and (chi2 > chi2_target):
+
+            # Fit ZLP using the ZLP component
+            zlp_new = eels.create_model(auto_background = False,
+                                        auto_add_edges  = False)
+            zlp_new.append(ZLPcomponent)
+            zlp_new.set_signal_range(*zlp_range)
+            zlp_new.multifit(show_progressbar=False)
+
+            # Create zlp model (use only the tail from the fit)
+            zlp_new.reset_signal_range()
+            zlp = zlp_new.as_signal(show_progressbar=False)
+            zlp_new.set_signal_range(*zlp_range)
+            idx = eels.axes_manager.signal_axes[0].value2index(ssd_range[0])
+            zlp.data[..., :idx] = eels.data[..., :idx]
+
+            # extract SSD using the Fourier-log deconvolution
+            ssd = eels.fourier_log_deconvolution(zlp)
+            ssd.remove_negative_intensity(inplace=True)
+            ssd.crop_signal1D(*ssd_range)
+            ssd.data += 1e-6
+            if ssd_range[1] is None:
+                ssd.hanning_taper()
+            else:
+                ssd = ssd.power_law_extrapolation_until(5., ssd_range[1],
+                                                 fix_neg_r=True, add_noise=True)
+
+            # create energy-loss axis
+            axis   = ssd.axes_manager.signal_axes[0]
+            energy = axis.axis.copy()
+
+            # Calculation of the ELF by normalization of the SSD
+            ELF = ssd.data / \
+                            (np.log(1 + (beta * tgt / energy) ** 2)* axis.scale)
+
+            if refractive_loop:
+                # normalize using the refractive index.
+                K = (ELF / energy).sum(axis = axis.index_in_array) * axis.scale
+                K = (K / (np.pi / 2) / (1 - 1. / n.data ** 2))
+                # Calculate the thickness only if possible and required
+                if full_output or iterations > 1:
+                    te = (332.5 * K * ke / Izlp.data)
+                    t.data = te.squeeze()
+            else:
+                # normalize using the thickness
+                K = t.data * Izlp.data / (332.5 * ke)
+            ELF = ELF / K[..., None] if len(self) != 1 else ELF / K
+
+            # Kramers-Kronig transform
+            eps.data = _kkt(energy, ELF) + 1j*ELF
+            eps.data =  eps.data / (eps.data.real**2.+eps.data.imag**2.)
+
+            del eels, ssd, ELF # free memory
+
+            if average and (eps.axes_manager.navigation_dimension > 0):
+                eps_corr.data[:] = eps.data.mean(
+                                   eps.axes_manager.navigation_indices_in_array,
+                                   keepdims=True)
+            else:
+                eps_corr.data = eps.data.copy()
+
+            if full_output or iterations > 1:
+                # Relativistic correction
+                #  Calculates relativistic correction from the Kroeger equation
+                #  The difference with the relativistic DCS is subtracted
+                ssd, vol, elf = eps_corr.get_relativistic_spectrum(
+                                  zlp=Izlp, t=t, output='full', *args, **kwargs)
+                del vol
+
+                # Extend data range to fit the whole EELS set, including ZLP
+                Eeels = self.axes_manager[-1].offset
+                Essd  = ssd.axes_manager[-1].offset
+                dshift = (Essd - Eeels) * np.ones(
+                                    ssd.axes_manager._navigation_shape_in_array)
+
+                kwerps = {'shift_array' : dshift,
+                          'crop' : False,
+                          'expand': True,
+                          'fill_value': 0.,
+                          'show_progressbar' : False}
+
+                ssd.shift1D(**kwerps)
+                elf.shift1D(**kwerps)
+                ssd.axes_manager[-1].offset = Eeels
+                elf.axes_manager[-1].offset = Eeels
+
+                # Fourier-exp convolution
+                from model import fourier_exp_convolution
+                ssd = fourier_exp_convolution(ssd, zlp)
+                elf = fourier_exp_convolution(elf, zlp)
+
+                # calculate correction
+                scorr = ssd - elf
+                del ssd, elf
+
+                # Limit the fractional correction
+                if delta is not None:
+                    fcorr = np.clip(scorr.data / self.data, -delta, delta)
+                    scorr.data = fcorr * self.data
+
+                # smooth, already smoothed?
+                #if fsmooth is not None:
+                #    scorr.gaussian_filter(fsmooth)
+
+                # Apply correction
+                eels = self - scorr
+                eels.remove_negative_intensity(inplace=True)
+
+                if io > 0:
+                    #chi2 = ((scorr.data-smemory)**2/smemory**2).sum()
+                    chi2 = smemory._chi2_score(scorr)
+                    chi2str = '{:0.2e}'.format(chi2)
+                    pbar.set_description(chi2str)
+                smemory = scorr.deepcopy()
+            io += 1
+            pbar.update(1)
+
+        pbar.close()
+
+        if full_output:
+            output = {}
+            tstr = self.metadata.General.title
+            if refractive_loop:
+                t.metadata.General.title = tstr + ', r-KKA thickness'
+                output['thickness'] = t
+            scorr.metadata.General.title = tstr + ',  r-KKA correction'
+            output['relativistic correction'] = scorr
+            return eps, output
+        else:
+            return eps
+
     def _chi2_score(self, sig, p=0.5):
         """
         Calculate the mean chi-2 score removing outliers in a pedestrian way.
