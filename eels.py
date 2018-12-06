@@ -833,7 +833,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             zlp_new.reset_signal_range()
             zlp = zlp_new.as_signal(show_progressbar=False)
             zlp_new.set_signal_range(*zlp_range)
-            idx = eels.axes_manager.signal_axes[0].value2index(ssd_range[0])
+            idx = eels.axes_manager.signal_axes[0].value2index(zlp_range[1])
             zlp.data[..., :idx] = eels.data[..., :idx]
 
             # extract SSD using the Fourier-log deconvolution
