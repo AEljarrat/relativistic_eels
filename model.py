@@ -49,24 +49,23 @@ def fourier_exp_convolution(ssd, zlp):
     '''
     eels = ssd.deepcopy()
     axis = ssd.axes_manager[-1]
-    ones_like_navi = np.ones(ssd.axes_manager._navigation_shape_in_array)
+    #ones_like_navi = np.ones(ssd.axes_manager._navigation_shape_in_array)
 
     tsize = (2*axis.size)
 
     # preload time-shift
-    cdata = np.exp(-2j*np.pi*axis.offset/axis.scale *\
-                   np.fft.fftfreq(tsize)*ones_like_navi[...,None])
+    tdata = np.exp(-2j*np.pi*axis.offset/axis.scale*np.fft.fftfreq(tsize))#*ones_like_navi[...,None])
 
     # preload ZLP integral
-    I0 = zlp.integrate1D(-1).data[..., None]
+    I0 = zlp.integrate1D(-1).data**-1#[..., None]
+    I0 = I0[..., None] if ssd.axes_manager.navigation_dimension > 0 else I0
 
     # The FFTs are done with 2 times energy-loss axis size
     kwfft = {'n':tsize, 'axis':axis.index_in_array}
-    cdata = np.exp(cdata/I0*np.fft.fft(ssd.data, **kwfft)) *\
-                   cdata*np.fft.fft(zlp.data, **kwfft)
-    cdata = np.fft.ifft(cdata, **kwfft).real
+    eels.data = np.exp(I0*tdata*np.fft.fft(ssd.data, **kwfft))
+    eels.data *= tdata*np.fft.fft(zlp.data, **kwfft)
+    eels.data = np.fft.ifft(eels.data, **kwfft).real
 
-    eels.data = cdata
     eels.get_dimensions_from_data()
 
     eels.data = np.roll(eels.data, -int(axis.offset/axis.scale), -1)
