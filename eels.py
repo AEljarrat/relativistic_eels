@@ -11,6 +11,7 @@ from hyperspy.defaults_parser import preferences
 
 # own dependency
 from signals import SignalMixin
+from dielectric import ModifiedCDF
 
 class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
@@ -319,6 +320,47 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         return spc
 
+    def kramers_kronig_transform(self, invert=True):
+        """
+        From a normalized energy-loss function, calculate the corresponding
+        Kramers-Kronig transform using FFTs. In this algorithm, the data is
+        padded with zeros up to double its size to avoid the wrap-around
+        problem. The energy axis is taken to be the last one in the dataset.
+        Additional functionality is available with the parameters.
+
+        Parameters
+        ----------
+        invert : bool
+         If True, the input is taken to be the imaginary part of the inverse
+         dielectric function, e.g. the energy-loss function obtained from a
+         normalized semi-classical bulk inelastic distribution. If False, the
+         input is interpreted as the imaginary part of the dielectric function.
+
+        Returns
+        -------
+        cdf : ModifiedCDF
+         The complex dielectric function including with the input in the
+         imaginary part and the corresponding Kramers-Kronig Transform in the
+         real.
+        """
+        imdata = self.data
+        axis   = self.axes_manager.signal_axes[0]
+        esize  = axis.size
+        dsize  = 2 * axis.size
+        ids    = self.axes_manager._get_data_slice(
+                          [(axis.index_in_array, slice(None, axis.size)), ])
+        q      = - 2 * np.fft.fft(imdata, dsize, -1).imag / dsize
+        q[ids] *= -1.
+        q      = np.fft.fft(q, axis=-1)
+        # prepare the output dielectric function
+        cdf = self._deepcopy_with_new_data( 1. + 1j*self.data )
+        cdf = ModifiedCDF(cdf)
+        if invert:
+            cdf.data += q[ids].real
+            cdf.data /= ( cdf.data.real**2. + cdf.data.imag**2. )
+        else:
+            cdf.data -= q[ids].real
+        return cdf
 
     def relativistic_kramers_kronig(self,
                                     zlp=None,
@@ -730,33 +772,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         """
 
-        def _kkt(imdata):
-            """
-            Multidimensional Kramers-Kronig Transform using FFT. In this one,
-            the imaginary data is padded with zeros up to double its size to
-            avoid the wrap-around problem. Note also that the energy axis is
-            taken to be the last one.
-
-            Parameters
-            ----------
-            imdata : ndarray
-             Energy-loss function, the imaginary part of the inverse dielectric
-             function, with a negative sign.
-
-            Returns
-            -------
-            redata : ndarray
-             Kramers-Kronig transform of the energy-loss function, the real part
-             of the inverse dielectric function, with a positive sign.
-            """
-            esize = imdata.shape[-1]
-            ids = (slice(None),) * (imdata.ndim-1) + (slice(None, esize),)
-            dsize = 2 * esize
-            q = - 2 * np.fft.fft(imdata, dsize, -1).imag / dsize
-            q[ids] *= -1.
-            q = np.fft.fft(q, axis=-1)
-            return q[ids].real + 1
-
         # Constants and units, electron mass, beam energy and collection angle
         me = constants.value(
             'electron mass energy equivalent in MeV') * 1e3  # keV
@@ -871,11 +886,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             ssd.data = ssd.data/K[..., None] if len(self) != 1 else ssd.data/K
 
             # Kramers-Kronig transform
-            # prepare the output dielectric function
-            from dielectric import ModifiedCDF
-            eps = ssd._deepcopy_with_new_data( _kkt(ssd.data) + 1j * ssd.data )
-            eps.data =  eps.data / (eps.data.real**2.+eps.data.imag**2.)
-            eps = ModifiedCDF(eps)
+            eps = ssd.kramers_kronig_transform(invert = True)
             del eels, ssd # free memory!
 
             eps_corr = eps.deepcopy()
