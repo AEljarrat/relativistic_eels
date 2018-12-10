@@ -276,6 +276,64 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                zlp.data[ids] = si.data[I2:] - ri.data[I2:]
            return zlp
 
+    def model_zero_loss_peak(self, signal_range, model=None, replace_data=True):
+        """
+        Flexible tool to model and fit the ZLP.
+
+        Parameters
+        ----------
+        signal_range : {list, tuple}
+         With two values, for the lower and upper limits of the range in which
+         the zero-loss peak model will be fitted. The first value may be None,
+         then it is set to the first value of the signal axis.
+        model : hyperspy model
+         To be used to fit the zero-loss peak. If None is provided, a Voigt peak
+         is used by default. Note that the model.signal parameter is substituted
+         by the input signal.
+        replace_data : bool
+         Replace the data below the second value of the signal_range with the
+         experimental data.
+
+        Returns
+        -------
+        zlp : ModifiedEELS
+         A zero-loss peak model with the same dimensions as the input signal. It
+         can be used by subtraction or deconvolution.
+        """
+
+        self._check_signal_dimension_equals_one()
+        if not isinstance(signal_range, tuple):
+            raise AttributeError('signal_range not recognized:'
+                                 'must be a tuple!')
+
+        if len(signal_range) != 2:
+            raise AttributeError('signal_range not recognized,'
+                                 'must be len = 2')
+
+        if model is None:
+            # default to Voigt peak
+            model = self.create_model(auto_background = False,
+                                      auto_add_edges  = False)
+            model.append(hs.model.components1D.Voigt())
+
+        if model.signal is not self:
+            model.signal = self
+
+        model.set_signal_range(*signal_range)
+        model.multifit(show_progressbar=False)
+
+        # Create zlp model (use only the tail from the fit)
+        model.reset_signal_range()
+        zlp = model.as_signal(show_progressbar=False)
+        model.set_signal_range(*signal_range)
+
+        if replace_data:
+            # trust the data below the fitting limit
+            idx = self.axes_manager.signal_axes[0].value2index(signal_range[1])
+            zlp.data[..., :idx] = self.data[..., :idx]
+
+        return zlp
+
     def power_law_extrapolation_until(self, window_size=20, total_size=1024,
                                       hanning=True, *args, **kwargs):
         '''
@@ -319,6 +377,122 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             spc.hanning_taper('both')
 
         return spc
+
+    def normalize_bulk_inelastic_scattering(self, zlp=1., n=None, t=None):
+        """
+        Normalize a the bulk inelastic scattering distribution using Ritchie's
+        formula. This formula does not take into account radiative or surface
+        modes. The normalization can be performed using the refractive index or
+        the thickness as input parameters. Providing one of these selects the
+        normalization procedure.
+
+        Parameters
+        ----------
+        zlp: {None, number, ndarray, Signal}
+            ZLP intensity. It is optional (can be None) if t is given,
+            full_output is False and no iterations are run. In any other case,
+            the ZLP is required either to perform the normalization step,
+            to calculate the thickness and/or to calculate the relativistic
+            correction.
+        n: {None, number, ndarray, Signal}
+            The medium refractive index. Used for normalization of the
+            SSD to obtain the energy loss function. If given the thickness
+            is estimated and returned. It is only required when `t` is None.
+        t: {None, number, ndarray, Signal}
+            The sample thickness in nm. Used for normalization of the
+            SSD to obtain the energy loss function. It is only required when
+            `n` is None.
+
+        Returns
+        -------
+        elf: ModifiedEELS
+            The imaginary part of the inverse dielectric function, also known as
+            energy-loss function.
+        t : Signal
+            The thickness, estimated from the refractive index in case this was
+            provided. In case the thickness was already provided, we have made
+            sure to adapt the navigation dimensions of the input signals.
+        """
+
+        # create energy-loss axis
+        axis   = self.axes_manager.signal_axes[0]
+        energy = axis.axis.copy()
+
+        # recognize zlp spectrum or intensity
+        if isinstance(zlp, hs.signals.Signal1D):
+            if (zlp.axes_manager.signal_dimension == 1) and (
+                zlp.axes_manager.navigation_shape ==
+                 self.axes_manager.navigation_shape):
+                Izlp = zlp.integrate1D(axis.index_in_axes_manager)
+
+        # the input parameters should agree with the navigation dimensions
+        Izlp = self._check_adapt_map_input(zlp)
+        n = self._check_adapt_map_input(n)
+        t = self._check_adapt_map_input(t)
+        for name in ['n', 't', 'Izlp']:
+            parameter = eval(name)
+            if isinstance(parameter, ValueError):
+                parameter.args = (parameter.args[0]+name,)
+                raise parameter
+
+        # select refractive or thickness loop
+        if n is None and t is None:
+            raise ValueError('Thickness and refractive index undefined.'
+                             'Please provide one of them.')
+        elif n is not None and t is not None:
+            raise ValueError('Thickness and refractive index both defined.'
+                             'Please provide only one of them.')
+        elif n is not None:
+            sum_rule_norm = True
+            if Izlp is not None:
+                t = self._get_navigation_signal().T
+        elif t is not None:
+            sum_rule_norm = False
+            if Izlp is None:
+                raise ValueError('Zero-loss intensity is needed for thickness '
+                                 'normalization. Provide also parameter zlp')
+
+        # Constants and units, electron mass, beam energy and collection angle
+        me = constants.value(
+            'electron mass energy equivalent in MeV') * 1e3  # keV
+        try:
+            e0 = self.metadata.Acquisition_instrument.TEM.beam_energy
+        except BaseException:
+            raise AttributeError("Please define the beam energy."
+                                 "You can do this e.g. by using the "
+                                 "set_microscope_parameters method")
+        try:
+            beta = self.metadata.Acquisition_instrument.TEM.Detector.\
+                EELS.collection_angle
+        except BaseException:
+            raise AttributeError("Please define the collection semi-angle. "
+                                 "You can do this e.g. by using the "
+                                 "set_microscope_parameters method")
+
+        ## Kinetic definitions
+        ke  = e0 * (1 + e0 / 2. / me) / (1 + e0 / me) ** 2
+        tgt = e0 * (2 * me + e0) / (me + e0)
+
+        # output
+        elf = self.deepcopy()
+
+        # Calculation of the ELF by normalization of the SSD
+        elf.data = self.data / \
+                           (np.log(1 + (beta * tgt / energy) ** 2) * axis.scale)
+
+        if sum_rule_norm:
+            # normalize using the refractive index.
+            K = (elf.data/energy).sum(axis=axis.index_in_array)*axis.scale
+            K = (K / (np.pi / 2) / (1 - 1. / n.data ** 2))
+            # Update the thickness if refractive index is present
+            te = (332.5 * K * ke / Izlp.data)
+            t.data = te.squeeze()
+        else:
+            # normalize using the thickness
+            K = t.data * Izlp.data / (332.5 * ke)
+
+        elf.data = elf.data / K[..., None] if len(self) != 1 else elf.data / K
+        return elf, t
 
     def kramers_kronig_transform(self, invert=True):
         """
@@ -668,7 +842,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                         zlp_range=None,
                                         ssd_range=(0.5, None),
                                         average=False,
-                                        full_output=True,
                                         show_progressbar=None,
                                         *args,
                                         **kwargs):
@@ -734,10 +907,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             False by default, should only be used when analyzing spectra from a
             homogenous sample, as only one dielectric function is retrieved.
             This switch has no effect if only one spectrum is being analyzed.
-        full_output : bool
-            If True, return a dictionary that contains the estimated
-            thickness if `t` is None and the estimated relativistic correction
-            if `iterations` > 1.
 
         Returns
         -------
@@ -772,57 +941,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         """
 
-        # Constants and units, electron mass, beam energy and collection angle
-        me = constants.value(
-            'electron mass energy equivalent in MeV') * 1e3  # keV
-        try:
-            e0 = self.metadata.Acquisition_instrument.TEM.beam_energy
-        except BaseException:
-            raise AttributeError("Please define the beam energy."
-                                 "You can do this e.g. by using the "
-                                 "set_microscope_parameters method")
-        try:
-            beta = self.metadata.Acquisition_instrument.TEM.Detector.\
-                EELS.collection_angle
-        except BaseException:
-            raise AttributeError("Please define the collection semi-angle. "
-                                 "You can do this e.g. by using the "
-                                 "set_microscope_parameters method")
+        # The spectrum contains the zero-loss peak
+        Izlp = self.estimate_elastic_scattering_intensity(zlp_range[1])
 
-        # these parameters should agree with the navigation dimensions
-        ZLPcomponent = zlp.components.Voigt
-        Izlp = self._check_adapt_map_input(ZLPcomponent.area.map['values'])
-        n = self._check_adapt_map_input(n)
-        t = self._check_adapt_map_input(t)
-        for name in ['Izlp', 'n', 't']:
-            parameter = eval(name)
-            if isinstance(parameter, ValueError):
-                parameter.args = (parameter.args[0]+name,)
-                raise parameter
-
-        # select refractive or thickness loop
-        if n is None and t is None:
-            raise ValueError('Thickness and refractive index undefined.'
-                             'Please provide one of them.')
-        elif n is not None and t is not None:
-            raise ValueError('Thickness and refractive index both defined.'
-                             'Please provide only one of them.')
-        elif n is not None:
-            refractive_loop = True
-            if (Izlp is not None) and (full_output is True or iterations > 1):
-                t = self._get_navigation_signal().T
-        elif t is not None:
-            refractive_loop = False
-            if Izlp is None:
-                raise ValueError('Zero-loss intensity is needed for thickness '
-                                 'normalization. Provide also parameter zlp')
-
-        # Kinetic definitions
-        ke = e0 * (1 + e0 / 2. / me) / (1 + e0 / me) ** 2
-        tgt = e0 * (2 * me + e0) / (me + e0)
-        rk0 = 2590 * (1 + e0 / me) * np.sqrt(2 * ke / me)
-
-        # copy the spectrum, EELS to update every iteration
+        # update the eels separately
         eels = self.deepcopy()
 
         # progressbar support
@@ -837,27 +959,17 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         chi2 = chi2_target*1e3
         while (io < iterations) and (chi2 > chi2_target):
 
-            # Fit ZLP using the ZLP component
-            zlp_new = eels.create_model(auto_background = False,
-                                        auto_add_edges  = False)
-            zlp_new.append(ZLPcomponent)
-            zlp_new.set_signal_range(*zlp_range)
-            zlp_new.multifit(show_progressbar=False)
-
-            # Create zlp model (use only the tail from the fit)
-            zlp_new.reset_signal_range()
-            zlp = zlp_new.as_signal(show_progressbar=False)
-            zlp_new.set_signal_range(*zlp_range)
-            idx = eels.axes_manager.signal_axes[0].value2index(zlp_range[1])
-            zlp.data[..., :idx] = eels.data[..., :idx]
+            # Update ZLP model
+            z = eels.model_zero_loss_peak(signal_range = zlp_range,
+                                          model        = zlp,
+                                          replace_data = False)
 
             # extract SSD using the Fourier-log deconvolution
-            ssd = eels.fourier_log_deconvolution(zlp)
-
-
+            ssd = eels.fourier_log_deconvolution(z)
             ssd.remove_negative_intensity(inplace=True)
             ssd.crop_signal1D(*ssd_range)
             ssd.data += 1e-6
+
             if ssd_range[1] is None:
                 ssd.hanning_taper()
             else:
@@ -865,29 +977,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 ssd = ssd.power_law_extrapolation_until(5., Efin,
                                                  fix_neg_r=True, add_noise=True)
 
-            # create energy-loss axis
-            axis   = ssd.axes_manager.signal_axes[0]
-            energy = axis.axis.copy()
-
-            # Calculation of the ELF by normalization of the SSD
-            ssd.data /= (np.log(1 + (beta * tgt / energy) ** 2) * axis.scale)
-
-            if refractive_loop:
-                # normalize using the refractive index.
-                K = (ssd.data/energy).sum(axis=axis.index_in_array)*axis.scale
-                K = (K / (np.pi / 2) / (1 - 1. / n.data ** 2))
-                # Calculate the thickness only if possible and required
-                if full_output or iterations > 1:
-                    te = (332.5 * K * ke / Izlp.data)
-                    t.data = te.squeeze()
-            else:
-                # normalize using the thickness
-                K = t.data * Izlp.data / (332.5 * ke)
-            ssd.data = ssd.data/K[..., None] if len(self) != 1 else ssd.data/K
-
-            # Kramers-Kronig transform
-            eps = ssd.kramers_kronig_transform(invert = True)
-            del eels, ssd # free memory!
+            # Normalize spectrum and Kramers-Kronig transform
+            ssd, tkka = ssd.normalize_bulk_inelastic_scattering(Izlp,n=n,t=t)
+            eps = ssd.kramers_kronig_transform(invert=True)
+            del eels, ssd # release memory
 
             eps_corr = eps.deepcopy()
             if average and (eps.axes_manager.navigation_dimension > 0):
@@ -897,12 +990,12 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             else:
                 eps_corr.data = eps.data.copy()
 
-            if full_output or iterations > 1:
+            if iterations > 1:
                 # Relativistic correction
                 #  Calculates relativistic correction from the Kroeger equation
                 #  The difference with the relativistic DCS is subtracted
                 ssd, vol, elf = eps_corr.get_relativistic_spectrum(
-                                  zlp=Izlp, t=t, output='full', *args, **kwargs)
+                               zlp=Izlp, t=tkka, output='full', *args, **kwargs)
                 del vol
 
                 # Extend data range to fit the whole EELS set, including ZLP
@@ -924,8 +1017,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
                 # Fourier-exp convolution
                 from model import fourier_exp_convolution
-                ssd = fourier_exp_convolution(ssd, zlp)
-                elf = fourier_exp_convolution(elf, zlp)
+                ssd = fourier_exp_convolution(ssd, z)
+                elf = fourier_exp_convolution(elf, z)
 
                 # calculate correction
                 scorr = ssd - elf
@@ -961,17 +1054,13 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         pbar.close()
 
-        if full_output:
-            output = {}
-            tstr = self.metadata.General.title
-            if refractive_loop:
-                t.metadata.General.title = tstr + ', r-KKA thickness'
-                output['thickness'] = t
-            scorr.metadata.General.title = tstr + ',  r-KKA correction'
-            output['relativistic correction'] = scorr
-            return eps, output
-        else:
-            return eps
+        output = {}
+        tstr = self.metadata.General.title
+        tkka.metadata.General.title = 'r-KKA thickness'
+        output['thickness'] = tkka
+        scorr.metadata.General.title = tstr + 'r-KKA correction'
+        output['relativistic correction'] = scorr
+        return eps, output
 
     def _chi2_score(self, sig, p=0.5):
         """
