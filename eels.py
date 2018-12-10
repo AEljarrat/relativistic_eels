@@ -970,11 +970,13 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             ssd.crop_signal1D(*ssd_range)
             ssd.data += 1e-6
 
-            if ssd_range[1] is None:
-                ssd.hanning_taper()
+            # smooth the boundaries
+            Efin_max = float(self.axes_manager.signal_axes[0].high_value)
+            Efin_ssd = float(ssd.axes_manager.signal_axes[0].high_value)
+            if Efin_ssd == Efin_max:
+                ssd.hanning_taper('both')
             else:
-                Efin = float(self.axes_manager[-1].high_value)
-                ssd = ssd.power_law_extrapolation_until(5., Efin,
+                ssd = ssd.power_law_extrapolation_until(5., Efin_max,
                                                  fix_neg_r=True, add_noise=True)
 
             # Normalize spectrum and Kramers-Kronig transform
