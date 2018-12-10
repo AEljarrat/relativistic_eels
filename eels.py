@@ -1111,6 +1111,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         # update the eels separately
         eels = self.deepcopy()
+        zlp_crop_range = (zlp.axis.low_value,
+                          zlp.axis.high_value + zlp.axis.scale)
 
         # progressbar support
         if show_progressbar is None:
@@ -1125,9 +1127,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         while (io < iterations) and (chi2 > chi2_target):
 
             # Update ZLP model
-            z = eels.model_zero_loss_peak(signal_range = zlp_range,
-                                          model        = zlp,
-                                          replace_data = False)
+            eels_zlp = eels.crop_signal1D_expansion(zlp_crop_range)
+            z = eels_zlp.model_zero_loss_peak(signal_range = zlp_range,
+                                              model        = zlp,
+                                              replace_data = False)
 
             # extract SSD using the Fourier-log deconvolution
             ssd = eels.fourier_log_deconvolution(z)
@@ -1183,9 +1186,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 elf.axes_manager[-1].offset = Eeels
 
                 # Fourier-exp convolution
-                from model import fourier_exp_convolution
-                ssd = fourier_exp_convolution(ssd, z)
-                elf = fourier_exp_convolution(elf, z)
+                ssd = ssd.fourier_exp_convolution(z)
+                elf = elf.fourier_exp_convolution(z)
 
                 # calculate correction
                 scorr = ssd - elf
@@ -1196,17 +1198,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                     fcorr = np.clip(scorr.data / self.data, -delta, delta)
                     scorr.data = fcorr * self.data
 
-                # smooth, already smoothed?
-                #if fsmooth is not None:
-                #    scorr.gaussian_filter(fsmooth)
-
                 # Apply correction
-                # debug macro!
-                #import ipdb; import matplotlib.pyplot as plt
-                #def plots(some_signal):
-                #    some_signal.plot()
-                #    plt.pause(1)
-                #ipdb.set_trace()
                 eels = self - scorr
                 eels.remove_negative_intensity(inplace=True)
 
