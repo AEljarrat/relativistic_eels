@@ -334,6 +334,70 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         return zlp
 
+    def fourier_exp_convolution(self, zlp):
+        '''
+        Poisson statistics to simulate the effect of plural inelastic scattering
+        using the exponential formula from Egerton (see eq. 4.8, pp 233); e.g.
+        starting from an input single-scattering distribution (SSD) and zero-
+        loss peak (ZLP) models, simulate the recorded EELS spectrum. This is
+        implemented using FFTs as the product of the exponential of the SSD and
+        the ZLP.
+
+        Note that because FEC uses FFT, care should be taken to ensure the input
+        SSD and ZLP meet periodic boundary constraints, for instance by allowing
+        the intensity to decay smoothly to zero at both ends of the energy axis.
+        The algorithm also assumes both signals have the same scale, but not
+        necessarily the same number of channels or offset.
+
+        Parameters
+        ----------
+        zlp : signal1D
+         A signal containing the ZLP.
+
+        Returns
+        -------
+        eels : signal1D
+         A signal that includes the ZLP and a simulated plural scattering
+         distribution corresponding to the inputs. Fourier-log deconvolution can
+         be applied to this signal to retrieve the input (see Example below).
+
+        Examples
+        --------
+         >>> eels = ssd.fourier_exp_convolution(zlp)
+         >>> ssd_estimate = eels.fourier_log_deconvolution(zlp)
+
+        References
+        ----------
+        R.F. Egerton "EELS in the electron microscope" 2011, Springer.
+        '''
+        # The output signal should look like the input signal
+        eels = self.deepcopy()
+
+        axis_ssd = self.axes_manager.signal_axes[0]
+        axis_zlp = zlp.axes_manager.signal_axes[0]
+
+        # FFTs are padded up to double the input signal size
+        tsize = (2*axis_ssd.size)
+
+        # to calculate the time-shift
+        tshift = lambda axis : np.exp(-2j*np.pi*axis.offset / \
+                                      axis.scale*np.fft.fftfreq(tsize))
+
+        # calculate the ZLP integral and invert
+        I0 = zlp.integrate1D(-1)**-1
+
+        # The FFTs are done with 2 times energy-loss axis size
+        kwfft = {'n':tsize, 'axis':-1}
+        eels.data = tshift(axis_ssd)*np.fft.fft(self.data, **kwfft)
+        eels.get_dimensions_from_data()
+        eels = np.exp(I0*eels)
+        eels.data *= tshift(axis_zlp)*np.fft.fft(zlp.data, **kwfft)
+        eels.data = np.fft.ifft(eels.data, **kwfft).real
+
+        eels.data = np.roll(eels.data, -int(axis_ssd.offset/axis_ssd.scale), -1)
+        eels.crop_signal1D(None, axis_ssd.size)
+        return eels
+
     def power_law_extrapolation_until(self, window_size=20, total_size=1024,
                                       hanning=True, *args, **kwargs):
         '''
