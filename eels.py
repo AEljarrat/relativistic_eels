@@ -352,7 +352,9 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         Parameters
         ----------
         zlp : signal1D
-         A signal containing the ZLP.
+         A signal containing the ZLP, must have the same navigation dimensions
+         as the input or none for a single zlp model. In this last case, the zlp
+         is broadcasted to convolve a single model to the whole input.
 
         Returns
         -------
@@ -383,20 +385,84 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         tshift = lambda axis : np.exp(-2j*np.pi*axis.offset / \
                                       axis.scale*np.fft.fftfreq(tsize))
 
-        # calculate the ZLP integral and invert
+        # Calculate the inverset ZLP integral
+        # and take care of broadcasting for single zlp input
         I0 = zlp.integrate1D(-1)**-1
+        I0 = I0.data[..., None] if (len(I0) != 1) else float(I0.data)
 
         # The FFTs are done with 2 times energy-loss axis size
         kwfft = {'n':tsize, 'axis':-1}
-        eels.data = tshift(axis_ssd)*np.fft.fft(self.data, **kwfft)
-        eels.get_dimensions_from_data()
-        eels = np.exp(I0*eels)
+        eels.data  = tshift(axis_ssd)*np.fft.fft(self.data, **kwfft)
+        eels.data  = np.exp(I0*eels.data)
         eels.data *= tshift(axis_zlp)*np.fft.fft(zlp.data, **kwfft)
-        eels.data = np.fft.ifft(eels.data, **kwfft).real
+        eels.data  = np.fft.ifft(eels.data, **kwfft).real
+        eels.get_dimensions_from_data()
 
         eels.data = np.roll(eels.data, -int(axis_ssd.offset/axis_ssd.scale), -1)
         eels.crop_signal1D(None, axis_ssd.size)
         return eels
+
+    def fourier_log_deconvolution(self, zlp):
+        '''
+        Poisson statistics to remove the effect of plural inelastic scattering
+        using the logarithmic formula from Egerton (see eq. 4.11, pp 234); e.g.
+        starting from an input energy-loss spectrum (EELS) and zero-loss peak
+        (ZLP) model, extract the SSD spectrum. This is implemented using FFTs as
+        the ratio of the logarithm of the EELS and the ZLP.
+
+        Note that because FLD uses FFT, care should be taken to ensure the input
+        EELS + ZLP meet periodic boundary constraints, for instance by allowing
+        the intensity to decay smoothly to zero at both ends of the energy axis.
+        The algorithm also assumes both signals have the same scale, but not
+        necessarily the same number of channels or offset.
+
+        Parameters
+        ----------
+        zlp : signal1D
+         A signal containing the ZLP, must have the same navigation dimensions
+         as the input or none for a single zlp model. In this last case, the zlp
+         is broadcasted to deconvolve a single model from the whole input.
+
+        Returns
+        -------
+        ssd : signal1D
+         An extracted signal, removing the ZLP and plural scattering
+         distribution from the input EELS. Fourier-log deconvolution can be
+         applied to this signal to retrieve the input (see Example below).
+
+        Examples
+        --------
+         >>> eels = ssd.fourier_exp_convolution(zlp)
+         >>> ssd_estimate = eels.fourier_log_deconvolution(zlp)
+
+        References
+        ----------
+        R.F. Egerton "EELS in the electron microscope" 2011, Springer.
+        '''
+        # The output signal should look like the input signal
+        ssd = self.deepcopy()
+
+        axis_spc = self.axes_manager.signal_axes[0]
+        axis_zlp = zlp.axes_manager.signal_axes[0]
+
+        # FFTs are padded up to double the input signal size
+        tsize = (2*axis_spc.size)
+
+        # to calculate the time-shift
+        tshift = lambda axis : np.exp(-2j*np.pi*axis.offset / \
+                                      axis.scale*np.fft.fftfreq(tsize))
+
+        # The FFTs are done with 2 times energy-loss axis size
+        kwfft = {'n':tsize, 'axis':-1}
+        ssd.data  = tshift(axis_spc) * np.fft.fft(self.data, **kwfft)
+        z = tshift(axis_zlp) * np.fft.fft(zlp.data, **kwfft)
+        ssd.data /= z
+        ssd.data  = z * np.nan_to_num(np.log(ssd.data))
+        ssd.data  = np.fft.ifft(ssd.data, **kwfft).real
+
+        ssd.data = np.roll(ssd.data, -int(axis_spc.offset/axis_spc.scale), -1)
+        ssd.crop_signal1D(None, axis_spc.size)
+        return ssd
 
     def power_law_extrapolation_until(self, window_size=20, total_size=1024,
                                       hanning=True, *args, **kwargs):
