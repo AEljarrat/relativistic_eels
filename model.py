@@ -54,7 +54,7 @@ def fourier_exp_convolution(ssd, zlp):
     tsize = (2*axis.size)
 
     # preload time-shift
-    tdata = np.exp(-2j*np.pi*axis.offset/axis.scale*np.fft.fftfreq(tsize))#*ones_like_navi[...,None])
+    tdata = np.exp(-2j*np.pi*axis.offset/axis.scale*np.fft.fftfreq(tsize))
 
     # preload ZLP integral
     I0 = zlp.integrate1D(-1).data**-1#[..., None]
