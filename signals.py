@@ -328,6 +328,76 @@ class SignalMixin(BaseSignal):
          (slice(None),) * eax.index_in_array + (slice(i1, i2),Ellipsis)] = value
         if not inplace: return spc
 
+    def crop_expand_signal1D(self,left=None,right=None,inplace=True,value=0):
+        """
+        If necessary, expand the signal range to fit the provided limits and,
+        after the expand, crop the signal range. Note that the limits are
+        always provided in signal axis units.
+
+        Parameters
+        ----------
+        left, right : {int, float}
+         Range limits provided in signal axis units.
+        inplace : bool
+         Performs the operation in-place. True by default.
+        value : number
+         The channels in the selected range are substituted by this value. Zero
+         by default.
+
+        Returns
+        -------
+        spc : EELSSpectrum
+         Spectral intensity in this range is set to 0.
+        """
+        self._check_signal_dimension_equals_one()
+        try:
+            left, right = signal_range_from_roi(left)
+        except TypeError:
+            # It was not a ROI, we carry on
+            pass
+        if inplace:
+            spc = self
+        else:
+            spc = self.deepcopy()
+
+        # First, expand to the left
+        left_old = spc.axes_manager.signal_axes[0].low_value
+        if left is not None:
+            if left < left_old:
+                dshift = (left_old - left) * np.ones(
+                                    spc.axes_manager._navigation_shape_in_array)
+                kwerps = {'shift_array'      : dshift,
+                          'crop'             : False,
+                          'expand'           : True,
+                          'fill_value'       : value,
+                          'show_progressbar' : False}
+                onesy = np.ones(spc.axes_manager._navigation_shape_in_array)
+                spc.shift1D(**kwerps)
+                spc.axes_manager.signal_axes[0].offset = left
+
+        # Then, expand to the right
+        left_old  = spc.axes_manager.signal_axes[0].low_value
+        right_old = spc.axes_manager.signal_axes[0].high_value
+        if right is not None:
+            if right > right_old:
+                # Calculate total pixel size
+                axis = spc.axes_manager.signal_axes[0]
+                offset = axis.offset - axis.scale
+                total_size = int(round((right-offset)/axis.scale))
+                expand_size = total_size - axis.size
+                # Concatenate the old data with the expansion
+                new_shape = list(spc.data.shape)
+                new_shape[axis.index_in_array] = expand_size
+                spc.data = np.concatenate(
+                            [spc.data, np.ones(new_shape)*value],
+                            axis = axis.index_in_array)
+                spc.get_dimensions_from_data()
+
+        # finally, crop
+        spc.crop_signal1D(left, right)
+
+        if not inplace: return spc
+
     def _check_adapt_map_input(self, ins, varname=''):
         '''
         Check and adapt an input parameter that will work with the map function

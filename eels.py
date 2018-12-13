@@ -222,41 +222,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                zlp.data[ids] = si.data[I2:] - ri.data[I2:]
            return zlp
 
-    def crop_signal1D_expansion(self, new_range=(None,None)):
-        """
-        Crops the signal but also expands it to fit a new range. This new range
-        is padded with zeroes.
-        """
-        s = self.deepcopy()
-        old_range = (self.axes_manager.signal_axes[0].low_value,
-                     self.axes_manager.signal_axes[0].high_value)
-        if new_range[0] is not None:
-            if new_range[0] < old_range[0]:
-                shift =  old_range[0] - new_range[0]
-                dshift = shift * np.ones(s.axes_manager._navigation_shape_in_array)
-                kwerps = {'shift_array' : dshift,
-                          'crop' : False,
-                          'expand': True,
-                          'fill_value': 0.,
-                          'show_progressbar' : False}
-                s.shift1D(**kwerps)
-                s.axes_manager.signal_axes[0].offset = new_range[0]
-        old_range = (s.axes_manager.signal_axes[0].low_value,
-                     s.axes_manager.signal_axes[0].high_value)
-        if new_range[1] is not None:
-            if new_range[1] > old_range[1]:
-                dshift = new_range[1]
-                dshift = dshift * np.ones(s.axes_manager._navigation_shape_in_array)
-                kwerps = {'shift_array' : dshift,
-                          'crop' : False,
-                          'expand': True,
-                          'fill_value': 0.,
-                          'show_progressbar' : False}
-                s.shift1D(**kwerps)
-                s.axes_manager.signal_axes[0].offset = old_range[0]
-        s.crop_signal1D(*new_range)
-        return s
-
     def model_zero_loss_peak(self, signal_range, model=None, replace_data=True):
         """
         Flexible tool to model and fit the ZLP.
@@ -1073,7 +1038,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         while (io < iterations) and (chi2 > chi2_target):
 
             # Update ZLP model
-            eels_zlp = eels.crop_signal1D_expansion(zlp_crop_range)
+            eels_zlp = eels.crop_expand_signal1D(*zlp_crop_range)
             z = eels_zlp.model_zero_loss_peak(signal_range = zlp_range,
                                               model        = zlp,
                                               replace_data = False)
