@@ -27,38 +27,47 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         else:
             hs.signals.EELSSpectrum.__init__(self, *args, **kwargs)
 
-    def remove_negative_intensity(self, inplace=False):
+    def remove_negative_intensity(self, inplace=True, value=0):
         '''
         By definition, electron energy-loss spectral intensity is positive but,
-        sometimes, our spectral treatments overlook this important fact.
+        sometimes, our spectral treatments overlook this important fact. Calling
+        this routine substitutes negative intensity channels by zero or the
+        provided value.
 
         Parameters
         ----------
         inplace : bool
-         Performs the operation in-place.
+         Performs the operation in-place. True by default.
+        value : number
+         Negative intensity channels are substituted by this value. Zero by
+         default.
 
         Returns
         -------
         spc : EELSSpectrum
-         Negative intensity is set to 0.
+         Negative intensity is set to a value.
         '''
         if inplace:
             spc = self
         else:
             spc = self.deepcopy()
-        spc.data[spc.data < 0.] = 0
-        return spc
+        spc.data[spc.data < 0.] = value
+        if not inplace: return spc
 
-    def remove_intensity(self, left_value=None, right_value=None, inplace=False):
+    def remove_intensity_range(self,left=None,right=None,inplace=True,value=0):
         '''
-        Remove all intensity in a range.
+        Calling this method substitutes all channels in a signal range by zero
+        or the provided value.
 
         Parameters
         ----------
-        threshold : {int, float}
-         Integer index or energy-loss units.
+        left, right : {int, float, hyperspy ROI}
+         Range limits provided as an integer data index or in signal axis units.
         inplace : bool
-         Performs the operation in-place.
+         Performs the operation in-place. True by default.
+        value : number
+         The channels in the selected range are substituted by this value. Zero
+         by default.
 
         Returns
         -------
@@ -68,17 +77,18 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         self._check_signal_dimension_equals_one()
         try:
             signal_range_from_roi = hs.hyperspy.misc.utils.signal_range_from_roi
-            left_value, right_value = signal_range_from_roi(left_value)
+            left, right = signal_range_from_roi(left)
         except TypeError:
             # It was not a ROI, we carry on
             pass
         eax = self.axes_manager.signal_axes[0]
-        i1, i2 = eax._get_index(left_value), eax._get_index(right_value)
+        i1, i2 = eax._get_index(left), eax._get_index(right)
         if inplace:
             spc = self
         else:
             spc = self.deepcopy()
-        spc.data[(slice(None),)*eax.index_in_array+(slice(i1, i2),Ellipsis)]=0.
+        spc.data[
+         (slice(None),) * eax.index_in_array + (slice(i1, i2),Ellipsis)] = value
         return spc
 
     def get_effective_collection_angle(self):
