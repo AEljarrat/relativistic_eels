@@ -222,61 +222,131 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                zlp.data[ids] = si.data[I2:] - ri.data[I2:]
            return zlp
 
-    def model_zero_loss_peak(self, signal_range, model=None, replace_data=True):
+    def _get_ZeroLossPeak_model(self, background=False):
         """
-        Flexible tool to model and fit the ZLP.
+        Create a zero-loss peak model using the ZeroLossPeak custom component.
+
+        Returns
+        -------
+        m : hyperspy model
+         Containing a ZeroLossPeak component, initialized to default values.
+        """
+        m = self.create_model(auto_background=False, auto_add_edges=False)
+        from components import ZeroLossPeak
+        m.append(ZeroLossPeak())
+        m.set_parameters_value('FWHM', 0.2)
+        m.set_parameters_value('area', 1.)
+        m.set_parameters_value('gamma', 0.05)
+        m.set_parameters_value('centre', 0.)
+        m.set_parameters_value('non_isochromaticity', 0.1)
+        m.set_parameters_free(['ZeroLossPeak',], ['non_isochromaticity',])
+
+        bck = m.components.ZeroLossPeak.background
+        bck.active = False
+
+        if background:
+
+            # predict offset
+            offset_max = self.data[..., :10].mean(-1) / m.axis.scale
+
+            # bounded fit works better
+            m.set_boundaries()
+            bck.ext_force_positive = True
+            bck.ext_bounded = True
+            bck._bounds = (0., offset_max.max())
+
+            m.components.ZeroLossPeak.background.map['values'] = offset_max*0.1
+            m.components.ZeroLossPeak.background.map['is_set'] = True
+            m.set_parameters_free(['ZeroLossPeak',], ['background',])
+
+        return m
+
+    def model_zero_loss_peak(self,
+                             threshold=None,
+                             model=None,
+                             energy_window='auto',
+                             background=False,
+                             replace_data=False,
+                             show_progressbar=None):
+        """
+        Flexible tool to model the zero-loss peak using a Voigt function and fit
+        the spectrum up to a threshold energy. The result is given as a signal.
+        The zero-loss peak model is created in a symmetric energy window.
+        This window should be large enough so that the tails decay smoothly to
+        zero, and the model can be used for (de)convolution purposes. Background
+        can be alternatively added to model dark current counting error.
 
         Parameters
         ----------
-        signal_range : {list, tuple}
-         With two values, for the lower and upper limits of the range in which
-         the zero-loss peak model will be fitted. The first value may be None,
-         then it is set to the first value of the signal axis.
+        threshold : {None, int, float}
+         Positive truncation energy to model the shape of the zero-loss peak,
+         especified in energy/index units by passing float/int. By default, a
+         value equal to the negative energy-loss limit is selected.
+        energy_window : {'auto', float}
+         Positive limit of the zero-centered symmetric energy window in which
+         the resulting signal is created.
         model : hyperspy model
-         To be used to fit the zero-loss peak. If None is provided, a Voigt peak
-         is used by default. Note that the model.signal parameter is substituted
-         by the input signal.
+         If provided, this model is used to fit the ZLP in the provided signal.
+         By default a model containing the ZeroLossPeak component (with a
+         modified Voigt peak) is used by default. Note that the model.signal
+         parameter is removed after the model is created, to save memory.
         replace_data : bool
-         Replace the data below the second value of the signal_range with the
-         experimental data.
+         Replace the data below the threshold with the experimental data.
+        show_progressbar : {None, bool}
+         Progressbar choice.
 
         Returns
         -------
         zlp : ModifiedEELS
-         A zero-loss peak model with the same dimensions as the input signal. It
-         can be used by subtraction or deconvolution.
+         A zero-loss peak model with the same dimensions as the input signal.
         """
 
         self._check_signal_dimension_equals_one()
-        if not isinstance(signal_range, tuple):
-            raise AttributeError('signal_range not recognized:'
-                                 'must be a tuple!')
+        axis  = self.axes_manager.signal_axes[-1]
+        zlp_ini = float( axis.low_value )
+        zlp_fin = float( axis.high_value + axis.scale )
+        assert ( zlp_ini < 0. ) and ( zlp_fin > 0. )
 
-        if len(signal_range) != 2:
-            raise AttributeError('signal_range not recognized,'
-                                 'must be len = 2')
+        # set fit range
+        if threshold is None:
+            fit_range = (zlp_ini, -zlp_ini)
+        else:
+            fit_range = (zlp_ini, threshold)
 
+        # set window range
+        if energy_window is 'auto':
+            win_range = (-zlp_fin, zlp_fin)
+        else:
+            win_range = (-energy_window, energy_window)
+
+        # Extract ZLP data
+        z = self.crop_expand_signal1D(*win_range, inplace=False)
+
+        # Process model data
         if model is None:
-            # default to Voigt peak
-            model = self.create_model(auto_background = False,
-                                      auto_add_edges  = False)
-            model.append(hs.model.components1D.Voigt())
+            # ZeroLossPeak model
+            model = z._get_ZeroLossPeak_model(background=background)
+        else:
+            # user input model
+            compdict = {
+               'components' : model.as_dictionary(fullcopy=False)['components']}
+            model = z.create_model(auto_background=False,
+                                   auto_add_edges=False,
+                                   dictionary=compdict)
 
-        if model.signal is not self:
-            model.signal = self
-
-        model.set_signal_range(*signal_range)
-        model.multifit(show_progressbar=False)
+        # Fit the chosen model to the ZLP data
+        model.set_signal_range(*fit_range)
+        model.multifit(show_progressbar=show_progressbar)
 
         # Create zlp model (use only the tail from the fit)
         model.reset_signal_range()
-        zlp = model.as_signal(show_progressbar=False)
-        model.set_signal_range(*signal_range)
+        zlp = model.as_signal(show_progressbar=show_progressbar)
+        model.set_signal_range(*fit_range)
 
         if replace_data:
-            # trust the data below the fitting limit
-            idx = self.axes_manager.signal_axes[0].value2index(signal_range[1])
-            zlp.data[..., :idx] = self.data[..., :idx]
+            # trust only the data below the fitting limit
+            idx = z.axes_manager.signal_axes[0].value2index(fit_range[1])
+            zlp.data[..., :idx] = z.data[..., :idx]
 
         return zlp
 
