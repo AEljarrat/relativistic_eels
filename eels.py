@@ -222,7 +222,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                zlp.data[ids] = si.data[I2:] - ri.data[I2:]
            return zlp
 
-    def _get_ZeroLossPeak_model(self, background=False):
+    def _get_ZeroLossPeak_model(self, background=False, compression=False,
+                                factor=0.9, width=0.5, N=2):
         """
         Create a zero-loss peak model using the ZeroLossPeak custom component.
 
@@ -241,6 +242,11 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         m.set_parameters_value('non_isochromaticity', 0.1)
         m.set_parameters_free(['ZeroLossPeak',], ['non_isochromaticity',])
 
+        # compression
+        if compression:
+            m.components.ZeroLossPeak.use_compression(factor, width, N)
+
+        # background
         bck = m.components.ZeroLossPeak.background
         bck.active = False
 
@@ -266,8 +272,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                              model=None,
                              energy_window='auto',
                              background=False,
+                             compression=False,
                              replace_data=False,
-                             show_progressbar=None):
+                             show_progressbar=None,
+                             *args, **kwargs):
         """
         Flexible tool to model the zero-loss peak using a Voigt function and fit
         the spectrum up to a threshold energy. The result is given as a signal.
@@ -282,18 +290,21 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
          Positive truncation energy to model the shape of the zero-loss peak,
          especified in energy/index units by passing float/int. By default, a
          value equal to the negative energy-loss limit is selected.
-        energy_window : {'auto', float}
-         Positive limit of the zero-centered symmetric energy window in which
-         the resulting signal is created.
         model : hyperspy model
          If provided, this model is used to fit the ZLP in the provided signal.
          By default a model containing the ZeroLossPeak component (with a
          modified Voigt peak) is used by default. Note that the model.signal
          parameter is removed after the model is created, to save memory.
+        energy_window : {'auto', float}
+         Positive limit of the zero-centered symmetric energy window in which
+         the resulting signal is created.
+        background : bool
+        compression : bool
         replace_data : bool
          Replace the data below the threshold with the experimental data.
         show_progressbar : {None, bool}
          Progressbar choice.
+        *args, **kwargs, passed to _get_ZeroLossPeak_model function
 
         Returns
         -------
@@ -325,14 +336,23 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         # Process model data
         if model is None:
             # ZeroLossPeak model
-            model = z._get_ZeroLossPeak_model(background=background)
+            model = z._get_ZeroLossPeak_model(background  = background,
+                                              compression = compression,
+                                              *args, **kwargs)
         else:
             # user input model
             compdict = {
                'components' : model.as_dictionary(fullcopy=False)['components']}
+            compressionf = model.components.ZeroLossPeak.compression
             model = z.create_model(auto_background=False,
                                    auto_add_edges=False,
                                    dictionary=compdict)
+            model.components.ZeroLossPeak.compression = compressionf
+
+        # Apply compression if necessary
+        compressionf = model.components.ZeroLossPeak.compression
+        if compressionf is not None:
+            model.signal.data *= compressionf(model.axis.axis)
 
         # Fit the chosen model to the ZLP data
         model.set_signal_range(*fit_range)
@@ -342,6 +362,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         model.reset_signal_range()
         zlp = model.as_signal(show_progressbar=show_progressbar)
         model.set_signal_range(*fit_range)
+
+        # Remove compression if necessary
+        if compressionf is not None:
+            zlp = zlp / compressionf(zlp.axes_manager[-1].axis)
 
         if replace_data:
             # trust only the data below the fitting limit

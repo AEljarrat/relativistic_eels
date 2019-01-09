@@ -109,10 +109,12 @@ class ZeroLossPeak(Component):
                   'centre' : centre - ab,
                   'scale'  : area}
         fout = self.background.value + _voigt(**kvoigt)
-        if self.compression is not None:
-            return fout * self.compression(x)
-        else:
-            return fout
+        return fout
+        # TODO: investigate if this helps at all
+        #if self.compression is not None:
+        #    return fout * self.compression(x)
+        #else:
+        #    return fout
 
     def use_compression(self, factor, width, N=2):
         self.compression = lambda x: (1. - factor * _butter(x, width, N))
