@@ -1108,7 +1108,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         while (io < iterations) and (chi2 > chi2_target):
 
             # Update ZLP model
-            eels_zlp = eels.crop_expand_signal1D(*zlp_crop_range)
+            eels_zlp = eels.crop_expand_signal1D(*zlp_crop_range, inplace=False)
             z = eels_zlp.model_zero_loss_peak(signal_range = zlp_range,
                                               model        = zlp,
                                               replace_data = False)
