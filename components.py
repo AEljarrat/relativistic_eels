@@ -95,6 +95,8 @@ class ZeroLossPeak(Component):
         self.isbackground = False
         self.convolved = True
 
+        self.compression = None
+
     def function(self, x):
         area   = self.area.value
         centre = self.centre.value
@@ -106,7 +108,14 @@ class ZeroLossPeak(Component):
                   'gamma'  : gamma,
                   'centre' : centre - ab,
                   'scale'  : area}
-        return self.background.value + _voigt(**kvoigt)
+        fout = self.background.value + _voigt(**kvoigt)
+        if self.compression is not None:
+            return fout * self.compression(x)
+        else:
+            return fout
+
+    def use_compression(self, factor, width, N=2):
+        self.compression = lambda x: (1. - factor * _butter(x, width, N))
 
 class TaucBandGap(Component):
 
