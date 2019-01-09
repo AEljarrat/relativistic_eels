@@ -5,7 +5,7 @@ from hyperspy.component import Component
 
 sqrt2pi = math.sqrt(2 * math.pi)
 
-def _voigt(x, FWHM=1, gamma=1, center=0, scale=1):
+def _voigt(x, FWHM=1, gamma=1, centre=0, scale=1):
     """Voigt lineshape.
 
     The Voigt peak is the convolution of a Lorentz peak with a Gaussian peak.
@@ -15,7 +15,7 @@ def _voigt(x, FWHM=1, gamma=1, center=0, scale=1):
         z(x) = (x + 1j gamma) / (sqrt(2) sigma)
         w(z) = exp(-z**2) erfc(-1j z) / (sqrt(2 pi) sigma)
 
-        V(x) = scale Re(w(z(x-center)))
+        V(x) = scale Re(w(z(x-centre)))
 
     Parameters
     ----------
@@ -23,8 +23,8 @@ def _voigt(x, FWHM=1, gamma=1, center=0, scale=1):
        The half-width half-maximum of the Lorentzian
     FWHM : real
        The FWHM of the Gaussian
-    center : real
-       Location of the center of the peak
+    centre : real
+       Location of the centre of the peak
     scale : real
        Value at the highest point of the peak
 
@@ -38,10 +38,22 @@ def _voigt(x, FWHM=1, gamma=1, center=0, scale=1):
     # wofz function = w(z) = Fad[d][e][y]eva function = exp(-z**2)erfc(-iz)
     from scipy.special import wofz
     sigma = FWHM / 2.3548200450309493
-    z = (np.asarray(x) - center + 1j * gamma) / (sigma * math.sqrt(2))
+    z = (np.asarray(x) - centre + 1j * gamma) / (sigma * math.sqrt(2))
     V = wofz(z) / (math.sqrt(2 * np.pi) * sigma)
     return scale * V.real
 
+def _butter(x, threshold=1., order=2):
+    '''
+    A Butterworth high-pass taper.
+
+    Parameters
+    ----------
+    threshold : float
+     Value of the taper cut-off.
+    order : int
+     Steepness of the taper, the higher the steeper.
+    '''
+    return 1. / (1. + (x/threshold)**order)
 
 class ZeroLossPeak(Component):
 
@@ -60,14 +72,7 @@ class ZeroLossPeak(Component):
     centre: Parameter
     FWHM : Parameter
     gamma : Parameter
-    resolution : Parameter
-    shirley_background : Parameter
     non_isochromaticity : Parameter
-    transmission_function : Parameter
-    spin_orbit_splitting : Bool
-    spin_orbit_branching_ratio : float
-    spin_orbit_splitting_energy : float
-
     """
 
     def __init__(self):
@@ -76,66 +81,32 @@ class ZeroLossPeak(Component):
             'centre',
             'FWHM',
             'gamma',
-            'resolution',
             'background',
-            'non_isochromaticity',
-            'transmission_function',
-            'offset'))
+            'non_isochromaticity'))
         self._position = self.centre
         self.FWHM.value = 1
         self.gamma.value = 0
         self.area.value = 1
-        self.resolution.value = 0
-        self.resolution.free = False
         self.background.value = 0.
         self.background.free = False
         self.non_isochromaticity.value = 0
         self.non_isochromaticity.free = False
-        self.transmission_function.value = 1
-        self.transmission_function.free = False
-
-        # Options
-        self.background.active = False
-        self.spin_orbit_splitting = False
-        self.spin_orbit_branching_ratio = 0.5
-        self.spin_orbit_splitting_energy = 0.61
 
         self.isbackground = False
         self.convolved = True
 
     def function(self, x):
-        area   = self.area.value * self.transmission_function.value
+        area   = self.area.value
         centre = self.centre.value
         ab     = self.non_isochromaticity.value
-        if self.resolution.value == 0:
-            FWHM = self.FWHM.value
-        else:
-            FWHM = math.sqrt(self.FWHM.value ** 2 + self.resolution.value ** 2)
-        gamma = self.gamma.value
+        FWHM   = self.FWHM.value
+        gamma  = self.gamma.value
         kvoigt = {'x'      : x,
                   'FWHM'   : FWHM,
                   'gamma'  : gamma,
-                  'center' : centre-ab,
+                  'centre' : centre - ab,
                   'scale'  : area}
-        f = _voigt(**kvoigt)
-
-        if self.spin_orbit_splitting is True:
-            ratio = self.spin_orbit_branching_ratio
-            shift = self.spin_orbit_splitting_energy
-            kvoigt['center'] = centre-ab-shift
-            kvoigt['scale']  = area * ratio
-            f = _voigt(**kvoigt)
-            f += f2
-
-        if self.background.active:
-            k = self.background.value
-            cf = np.cumsum(f)
-            cf = cf[-1] - cf
-            self.cf = cf
-            return cf * k + f
-        else:
-            k = self.background.value
-            return k + f
+        return self.background.value + _voigt(**kvoigt)
 
 class TaucBandGap(Component):
 
