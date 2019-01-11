@@ -281,7 +281,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                              threshold=None,
                              model=None,
                              energy_window='auto',
-                             replace_data=False,
+                             return_model=False,
                              show_progressbar=None,
                              *args, **kwargs):
         """
@@ -306,16 +306,15 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         energy_window : {'auto', float}
          Positive limit of the zero-centered symmetric energy window in which
          the resulting signal is created. Set to 'auto' to use the full range.
-        replace_data : bool
-         Replace the data below the threshold with the experimental data. Not
-         used by default (set to False).
+        return_model : bool
+         Returns the fitted model instead of a signal.
         show_progressbar : {None, bool}
          Progressbar choice.
         *args, **kwargs, passed to _get_ZeroLossPeak_model function.
 
         Returns
         -------
-        zlp : ModifiedEELS
+        zlp : ModifiedEELS || model
          A zero-loss peak model with the same dimensions as the input signal.
         """
 
@@ -346,8 +345,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             model = z._get_ZeroLossPeak_model(*args, **kwargs)
         else:
             # user input model
-            #compdict = {
-            #   'components' : model.as_dictionary(fullcopy=False)['components']}
             compdict = model.as_dictionary(fullcopy=True)
             model = z.create_model(auto_background = False,
                                    auto_add_edges  = False,
@@ -364,21 +361,19 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         model.set_signal_range(*fit_range)
         model.multifit(show_progressbar=show_progressbar)
 
-        # Create zlp model (use only the tail from the fit)
-        model.reset_signal_range()
-        zlp = model.as_signal(show_progressbar=show_progressbar)
-        model.set_signal_range(*fit_range)
+        if return_model:
+            return model
 
-        # Remove compression if necessary
-        if cfunc is not None:
-            zlp = zlp / cfunc(zlp.axes_manager[-1].axis)
+        else:
+            # Create zlp model
+            model.reset_signal_range()
+            zlp = model.as_signal(show_progressbar=show_progressbar)
 
-        if replace_data:
-            # trust only the data below the fitting limit
-            idx = z.axes_manager.signal_axes[0].value2index(fit_range[1])
-            zlp.data[..., :idx] = z.data[..., :idx]
+            # Remove compression if necessary
+            if cfunc is not None:
+                zlp = zlp / cfunc(zlp.axes_manager[-1].axis)
 
-        return zlp
+            return zlp
 
     def fourier_exp_convolution(self, zlp):
         '''
@@ -1140,8 +1135,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             # Update ZLP model
             eels_zlp = eels.crop_expand_signal1D(*zlp_crop_range, inplace=False)
             z = eels_zlp.model_zero_loss_peak(signal_range = zlp_range,
-                                              model        = zlp,
-                                              replace_data = False)
+                                              model        = zlp)
 
             # extract SSD using the Fourier-log deconvolution
             ssd = eels.fourier_log_deconvolution(z)
