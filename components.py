@@ -96,6 +96,7 @@ class ZeroLossPeak(Component):
         self.convolved = True
 
         self.compression = None
+        self._whitelist['compression'] = None
 
     def function(self, x):
         area   = self.area.value
@@ -116,7 +117,7 @@ class ZeroLossPeak(Component):
         #else:
         #    return fout
 
-    def use_compression(self, factor, width, N=2):
+    def use_compression(self, factor=0.99, width=0.7, N=4):
         self.compression = lambda x: (1. - factor * _butter(x, width, N))
 
 class TaucBandGap(Component):
