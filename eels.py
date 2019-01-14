@@ -341,8 +341,9 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         else:
             win_range = (-energy_window, energy_window)
 
-        # Extract ZLP data
-        z = self.crop_expand_signal1D(*win_range, inplace=False)
+        # Extract ZLP data using expand and crop technique
+        z = self.expand_signal1D(*win_range, inplace=False)
+        z.crop_signal1D(*win_range)
 
         # Process model data
         if model is None:
@@ -374,9 +375,15 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             model.reset_signal_range()
             zlp = model.as_signal(show_progressbar=show_progressbar)
 
-            # Remove compression if necessary
             if cfunc is not None:
+                # Remove compression if necessary
                 zlp = zlp / cfunc(zlp.axes_manager[-1].axis)
+
+                # correct ZLP model central part
+                zslice = zlp.isig[-1.:1.]
+                sslice = self.isig[-1.:1.]
+                this_ones = zslice.data < sslice.data
+                zslice.data[this_ones] = sslice.data[this_ones]
 
             return zlp
 
@@ -1137,10 +1144,11 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         chi2 = chi2_target*1e3
         while (io < iterations) and (chi2 > chi2_target):
 
-            # Update ZLP model
-            eels_zlp = eels.crop_expand_signal1D(*zlp_crop_range, inplace=False)
-            z = eels_zlp.model_zero_loss_peak(signal_range = zlp_range,
-                                              model        = zlp)
+            # Update ZLP model with appropriate size (expand and crop technique)
+            z = eels.expand_signal1D(*zlp_crop_range, inplace=False)
+            z.crop_signal1D(*zlp_crop_range)
+            z = z.model_zero_loss_peak(signal_range = zlp_range,
+                                       model        = zlp)
 
             # extract SSD using the Fourier-log deconvolution
             ssd = eels.fourier_log_deconvolution(z)
@@ -1148,7 +1156,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             ssd.crop_signal1D(*ssd_range)
             ssd.data += 1e-6
 
-            # smooth the boundaries
+            # smooth the boundaries and optionally pad
             Efin_max = float(self.axes_manager.signal_axes[0].high_value)
             Efin_ssd = float(ssd.axes_manager.signal_axes[0].high_value)
             if Efin_ssd == Efin_max:

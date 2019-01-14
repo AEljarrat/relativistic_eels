@@ -328,11 +328,10 @@ class SignalMixin(BaseSignal):
          (slice(None),) * eax.index_in_array + (slice(i1, i2),Ellipsis)] = value
         if not inplace: return spc
 
-    def crop_expand_signal1D(self,left=None,right=None,inplace=True,value=0):
+    def expand_signal1D(self,left=None,right=None,inplace=True,value=0.):
         """
-        If necessary, expand the signal range to fit the provided limits and,
-        after the expand, crop the signal range. Note that the limits are
-        always provided in signal axis units.
+        Expand the signal dimension to the left and right. If the provided value
+        lies within the signal boundaries, nothing is done in this direction.
 
         Parameters
         ----------
@@ -347,7 +346,7 @@ class SignalMixin(BaseSignal):
         Returns
         -------
         spc : EELSSpectrum
-         Spectral intensity in this range is set to 0.
+         If not inplace, return the result in a new signal.
         """
         self._check_signal_dimension_equals_one()
         try:
@@ -364,16 +363,17 @@ class SignalMixin(BaseSignal):
         left_old = spc.axes_manager.signal_axes[0].low_value
         if left is not None:
             if left < left_old:
-                dshift = (left_old - left) * np.ones(
-                                    spc.axes_manager._navigation_shape_in_array)
-                kwerps = {'shift_array'      : dshift,
-                          'crop'             : False,
-                          'expand'           : True,
-                          'fill_value'       : value,
-                          'show_progressbar' : False}
-                onesy = np.ones(spc.axes_manager._navigation_shape_in_array)
-                spc.shift1D(**kwerps)
-                spc.axes_manager.signal_axes[0].offset = left
+                # Calculate total pixel size
+                axis = spc.axes_manager.signal_axes[0]
+                expand_size = int(round((left_old-left)/axis.scale))
+                # Concatenate the old data with the expansion
+                new_shape = list(spc.data.shape)
+                new_shape[axis.index_in_array] = expand_size
+                spc.data = np.concatenate(
+                            [np.ones(new_shape)*value, spc.data],
+                            axis = axis.index_in_array)
+                axis.offset -= expand_size * axis.scale
+                spc.get_dimensions_from_data()
 
         # Then, expand to the right
         left_old  = spc.axes_manager.signal_axes[0].low_value
@@ -392,9 +392,6 @@ class SignalMixin(BaseSignal):
                             [spc.data, np.ones(new_shape)*value],
                             axis = axis.index_in_array)
                 spc.get_dimensions_from_data()
-
-        # finally, crop
-        spc.crop_signal1D(left, right)
 
         if not inplace: return spc
 
