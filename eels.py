@@ -1022,10 +1022,11 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                         fsmooth=None,
                                         iterations=20,
                                         chi2_target=1e-4,
-                                        zlp_range=None,
-                                        ssd_range=(0.5, None),
                                         average=False,
                                         show_progressbar=None,
+                                        kwpad=None,
+                                        ssd_threshold=None,
+                                        zlp_threshold=None,
                                         *args,
                                         **kwargs):
         r"""Calculate the complex dielectric function from a single scattering
@@ -1058,7 +1059,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         Parameters
         ----------
         zlp: EELSModel
-            ZLP model containing a Voigt component to fit the zlp.
+            ZLP model containing a ZeroLossPeak component to fit the zlp. It can
+            be obtained by using the model_zero_loss_peak method.
         n: {None, number, ndarray, Signal}
             The medium refractive index. Used for normalization of the
             SSD to obtain the energy loss function. If given the thickness
@@ -1090,6 +1092,20 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             False by default, should only be used when analyzing spectra from a
             homogenous sample, as only one dielectric function is retrieved.
             This switch has no effect if only one spectrum is being analyzed.
+        kwpad : {None, dictionary}
+            Optional paramater. A dictionary with key-word arguments for the
+            power_law_extrapolation method. If provided, this method will be
+            used to extend the high-energy tail of the spectra. In most cases,
+            this padding is necessary to obtain correct Fourier transforms.
+        ssd_threshold : {None, float}
+            Optionally, crop the single scattering distribution prior to
+            normalization using this value as a lower boundary. By default, the
+            full spectra starting from the first positive channel are used.
+        zlp_threshold : {None, float}
+            Optionally, provide the upper boundary for the ZLP fit. This fit is
+            performed using the model_zero_loss_peak method. By default, the fit
+            range is set simetrically around the ZLP using the first channel as
+            lower boundary.
 
         Returns
         -------
@@ -1124,13 +1140,26 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         """
 
-        # The spectrum contains the zero-loss peak
-        Izlp = self.estimate_elastic_scattering_intensity(zlp_range[1])
+        # Calculate the energy ranges
+        axis = self.axes_manager[-1]
 
-        # update the eels separately
-        eels = self.deepcopy()
-        zlp_crop_range = (zlp.axis.low_value,
-                          zlp.axis.high_value + zlp.axis.scale)
+        eel_range = [float(axis.low_value),
+                     float(axis.high_value+axis.scale)]
+
+        ssd_range = [float(axis.scale),
+                     float(axis.high_value+axis.scale)]
+
+        if ssd_threshold is not None:
+            ssd_range[0] = ssd_threshold
+
+        if zlp_threshold is None:
+            zlp_threshold  = float(zlp.axis.axis[zlp.channel_switches][-1])
+
+        # Calculate the ZLP intensity
+        Izlp = self.estimate_elastic_scattering_intensity(zlp_threshold)
+
+        # EEL is updated separately
+        eel = self.deepcopy()
 
         # progressbar support
         if show_progressbar is None:
@@ -1145,31 +1174,33 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         while (io < iterations) and (chi2 > chi2_target):
 
             # Update ZLP model with appropriate size (expand and crop technique)
-            z = eels.expand_signal1D(*zlp_crop_range, inplace=False)
-            z.crop_signal1D(*zlp_crop_range)
-            z = z.model_zero_loss_peak(signal_range = zlp_range,
-                                       model        = zlp)
+            z = eel.model_zero_loss_peak(threshold = zlp_threshold,
+                                         model     = zlp)
+
+            if kwpad is not None:
+                # Pad the EELS spectra
+                eel = eel.power_law_extrapolation_until(**kwpad)
 
             # extract SSD using the Fourier-log deconvolution
-            ssd = eels.fourier_log_deconvolution(z)
+            ssd = eel.fourier_log_deconvolution(z)
+            del eel
             ssd.remove_negative_intensity(inplace=True)
             ssd.crop_signal1D(*ssd_range)
             ssd.data += 1e-6
 
             # smooth the boundaries and optionally pad
-            Efin_max = float(self.axes_manager.signal_axes[0].high_value)
-            Efin_ssd = float(ssd.axes_manager.signal_axes[0].high_value)
-            if Efin_ssd == Efin_max:
-                ssd.hanning_taper('both')
+            if kwpad is not None:
+                ssd = ssd.power_law_extrapolation_until(**kwpad)
             else:
-                ssd = ssd.power_law_extrapolation_until(5., Efin_max,
-                                                 fix_neg_r=True, add_noise=True)
+                ssd.hanning_taper('both')
 
             # Normalize spectrum and Kramers-Kronig transform
             ssd, tkka = ssd.normalize_bulk_inelastic_scattering(Izlp,n=n,t=t)
             eps = ssd.kramers_kronig_transform(invert=True)
-            del eels, ssd # release memory
+            eps.crop(-1, *ssd_range)
+            del ssd
 
+            # Apply averaging if needed
             eps_corr = eps.deepcopy()
             if average and (eps.axes_manager.navigation_dimension > 0):
                 eps_corr.data[:] = eps.data.mean(
@@ -1186,26 +1217,25 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                zlp=Izlp, t=tkka, output='full', *args, **kwargs)
                 del vol
 
-                # Extend data range to fit the whole EELS set, including ZLP
-                Eeels = self.axes_manager[-1].offset
-                Essd  = ssd.axes_manager[-1].offset
-                dshift = (Essd - Eeels) * np.ones(
-                                    ssd.axes_manager._navigation_shape_in_array)
-
-                kwerps = {'shift_array' : dshift,
-                          'crop' : False,
-                          'expand': True,
-                          'fill_value': 0.,
-                          'show_progressbar' : False}
-
-                ssd.shift1D(**kwerps)
-                elf.shift1D(**kwerps)
-                ssd.axes_manager[-1].offset = Eeels
-                elf.axes_manager[-1].offset = Eeels
-
-                # Fourier-exp convolution
+                # Fourier-exp convolution with the current ZLP model...
+                # ... uses the expand technique and optional PLaw padding
+                # ...for the SSD
+                ssd.expand_signal1D(*eel_range, inplace=True)
+                if kwpad is not None:
+                    ssd = ssd.power_law_extrapolation_until(**kwpad)
+                else:
+                    ssd.hanning_taper('both')
                 ssd = ssd.fourier_exp_convolution(z)
+                ssd.crop_signal1D(*eel_range)
+
+                # ... for the ELF
+                elf.expand_signal1D(*eel_range, inplace=True)
+                if kwpad is not None:
+                    elf = elf.power_law_extrapolation_until(**kwpad)
+                else:
+                    elf.hanning_taper('both')
                 elf = elf.fourier_exp_convolution(z)
+                elf.crop_signal1D(*eel_range)
 
                 # calculate correction
                 scorr = ssd - elf
@@ -1217,8 +1247,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                     scorr.data = fcorr * self.data
 
                 # Apply correction
-                eels = self - scorr
-                eels.remove_negative_intensity(inplace=True)
+                eel = self - scorr
+                eel.remove_negative_intensity(inplace=True)
 
                 if io > 0:
                     #chi2 = ((scorr.data-smemory)**2/smemory**2).sum()
