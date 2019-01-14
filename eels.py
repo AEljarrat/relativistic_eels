@@ -228,6 +228,11 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                 *args, **kwargs):
         """
         Create a zero-loss peak model using the ZeroLossPeak custom component.
+        The model contains a Voigt peak and an optional intensity offset to
+        simulate the background. Additionally, a compression filter can be
+        calculated to give more importance to the zero-loss tails. This option
+        only works when the model is used in conjuntion with
+        model_zero_loss_peak.
 
         Parameters
         ----------
