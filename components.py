@@ -118,6 +118,23 @@ class ZeroLossPeak(Component):
         #    return fout
 
     def use_compression(self, factor=0.99, width=0.7, N=4):
+        """
+        Set a compression filter for this model. The filter is designed using a
+        Butterworth function. The compression filter will not be used by the
+        regular fit method, but needs a specially designed fit routine found in
+        the eels package called model_zero_loss_peak. The compression filter is
+        added to the model _whitelist allowing the copy.
+
+        Parameters
+        ----------
+        factor : float
+         Sets the compression ratio for this filter. The zero-loss channel is
+         reduced by this factor.
+        width : float
+         The breadth of the Butterworth function.
+        N : float
+         The order of the Butterworth function.
+        """
         self.compression = lambda x: (1. - factor * _butter(x, width, N))
 
 class TaucBandGap(Component):

@@ -225,7 +225,9 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
     def _get_ZeroLossPeak_model(self,
                                 background=False,
                                 compression=False,
-                                *args, **kwargs):
+                                factor = 0.99,
+                                width = 0.5,
+                                N = 4):
         """
         Create a zero-loss peak model using the ZeroLossPeak custom component.
         The model contains a Voigt peak and an optional intensity offset to
@@ -240,6 +242,9 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
          Adds an intensity offset to the model to simulate background intensity.
         compression : bool
          Sets a compression filter to reduce the intensity of the ZLP.
+        factor, width, N : floats
+         These arguments are passed to the use_compression method of the
+         ZeroLossPeak component. More information in the documentation therein.
 
         Returns
         -------
@@ -260,7 +265,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         if compression:
             # sets a compression filter for the most intense part of the ZLP
-            ZLP.use_compression(*args, **kwargs)
+            ZLP.use_compression(factor=factor, width=width, N=N)
 
         if background:
 
