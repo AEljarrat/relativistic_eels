@@ -376,12 +376,15 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             zlp = model.as_signal(show_progressbar=show_progressbar)
 
             if cfunc is not None:
-                # Remove compression if necessary
-                zlp = zlp / cfunc(zlp.axes_manager[-1].axis)
 
-                # correct ZLP model central part
-                zslice = zlp.isig[-1.:1.]
-                sslice = self.isig[-1.:1.]
+                # Remove compression from ZLP model
+                carr = cfunc(zlp.axes_manager[-1].axis)
+                zlp = zlp / carr
+
+                # Correct compression in central part
+                clims = zlp.axes_manager[-1].axis[(carr - 0.9)<0.][[0,-1]]
+                zslice = zlp.isig[clims[0]:clims[1]]
+                sslice = self.isig[clims[0]:clims[1]]
                 this_ones = zslice.data < sslice.data
                 zslice.data[this_ones] = sslice.data[this_ones]
 
