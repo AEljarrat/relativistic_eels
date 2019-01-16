@@ -236,3 +236,61 @@ def run_kka(Issd, Izlp, get_chi2_score=True, *args, **kwargs):
         chi2 = Issd._chi2_score(Itot)
         print('Xi-squared evl :',  chi2)
     return eps, out
+
+## Apply again the ZLP fit and extract the SSD
+
+
+def extract_ssd(spc, zlp, kwpad=None):
+    """
+    Perform Fourier-log deconvolution using a zlp model.
+    """
+    zlp_threshold = float(zlp.axis.axis[zlp.channel_switches][-1])
+    axis = spc.axes_manager[-1]
+    ssd_range = (float(axis.scale), float(axis.high_value+axis.scale))
+
+    # Update ZLP model with appropriate size (expand and crop technique)
+    z = spc.model_zero_loss_peak(threshold = zlp_threshold,
+                                 model     = zlp)
+    ssd = spc.deepcopy()
+    if kwpad is not None:
+        # Pad the EELS spectra
+        ssd = ssd.power_law_extrapolation_until(**kwpad)
+
+    # extract SSD using the Fourier-log deconvolution
+    ssd = ssd.fourier_log_deconvolution(z)
+    ssd.crop_signal1D(*ssd_range)
+    ssd.remove_negative_intensity()
+    return ssd, z
+
+def process_ssd(ssd, z, left, right, hanning_width=None, kwpad=None, n=None):
+    """
+    Extracts the dielectric function if n is provided
+    """
+
+    axis = ssd.axes_manager[-1]
+    ssd_range = (float(axis.scale), float(axis.high_value+axis.scale))
+
+    emid = left + (right-left) / 2.
+    idx = ssd.axes_manager[-1].value2index(emid)
+
+    bck = ssd.isig[left:right].mean(-1)
+
+    ssd_h = ssd.__class__(ssd - bck)
+    if hanning_width is not None:
+        ssd_h.hanning_taper('left', channels=hanning_width, offset=idx)
+
+    Izlp = (z - bck).integrate1D(-1)
+
+    if kwpad is not None:
+        # Pad the EELS spectra
+        ssd_h = ssd_h.power_law_extrapolation_until(**kwpad)
+
+    if n is None:
+        ssd_h.crop_signal1D(*ssd_range)
+        return ssd_h
+    else:
+        elf_h, tkka = ssd_h.normalize_bulk_inelastic_scattering(Izlp, n=n)
+        eps_h = elf_h.kramers_kronig_transform(invert=True)
+        eps_h.crop(-1, *ssd_range)
+        ssd_h.crop_signal1D(*ssd_range)
+        return ssd_h, eps_h
