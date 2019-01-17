@@ -388,10 +388,11 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 zlp = zlp / carr
 
                 # correct negative eloss tail
+                ndim = self.axes_manager.navigation_dimension
                 de = axis.scale
                 dtail = self.isig[zlp_ini] - zlp.isig[zlp_ini]
                 zslice = zlp.isig[:zlp_ini+de]
-                zslice.data[:] += dtail
+                zslice.data += dtail.data[..., None] if ndim > 0 else dtail.data
 
                 # Use experimental data within compression limits
                 clim = zlp.axes_manager[-1].axis[(carr - 0.95)<0.][-1]
@@ -402,7 +403,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 # correct positive eloss tail
                 dtail = self.isig[clim] - zlp.isig[clim]
                 zslice = zlp.isig[clim:]
-                zslice.data[:] += dtail
+                zslice.data += dtail.data[..., None] if ndim > 0 else dtail.data
 
                 # finish touches
                 zlp.remove_negative_intensity(inplace=True)
