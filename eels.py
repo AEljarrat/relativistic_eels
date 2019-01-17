@@ -379,6 +379,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             # Create zlp model
             model.reset_signal_range()
             zlp = model.as_signal(show_progressbar=show_progressbar)
+            zlp = ModifiedEELS(zlp)
 
             if cfunc is not None:
 
@@ -386,11 +387,30 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 carr = cfunc(zlp.axes_manager[-1].axis)
                 zlp = zlp / carr
 
+                # correct negative eloss tail
+                de = axis.scale
+                dtail = self.isig[zlp_ini] - zlp.isig[zlp_ini]
+                zslice = zlp.isig[:zlp_ini+de]
+                zslice.data[:] += dtail
+
                 # Use experimental data within compression limits
-                clims = zlp.axes_manager[-1].axis[(carr - 0.95)<0.][[0, -1]]
-                zslice = zlp.isig[zlp_ini:clims[1]]
-                sslice = self.isig[zlp_ini:clims[1]]
+                clim = zlp.axes_manager[-1].axis[(carr - 0.95)<0.][-1]
+                zslice = zlp.isig[zlp_ini:clim]
+                sslice = self.isig[zlp_ini:clim]
                 zslice.data[:] = sslice.data[:]
+
+                # correct positive eloss tail
+                dtail = self.isig[clim] - zlp.isig[clim]
+                zslice = zlp.isig[clim:]
+                zslice.data[:] += dtail
+
+                # finish touches
+                zlp.remove_negative_intensity(inplace=True)
+                #zlp.hanning_taper('both')
+                ncl = int((zlp_fin - zlp_ini)//(de*2))
+                ncr = int((zlp_fin - clim)//(de*2))
+                zlp.hanning_taper(side='left', channels=ncl)
+                zlp.hanning_taper(side='right', channels=ncr)
 
             return zlp
 
