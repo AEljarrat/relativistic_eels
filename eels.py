@@ -547,8 +547,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
     def power_law_extrapolation_until(self, window_size=20, total_size=1024,
                                       hanning=True, *args, **kwargs):
         '''
-        Usefullity mathod. Extends the spectrum using `power_law_extrapolation`
-        until the resulting spectrum has the given total number of pixels.
+        Extend the spectrum using  `power_law_extrapolation` until the resulting
+        spectrum has the given total number of pixels.
 
         Parameters
         ----------
@@ -557,7 +557,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
          the size in energy-loss units.
         total_size : {int, float}
          Total number of pixels. Alternatively, this parameter can be a float
-         specifying the size in energy-loss units.
+         specifying the size in signal axis units.
 
         Returns
         -------
@@ -565,16 +565,16 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
          The extended spectrum.
 
         '''
-        eax = self.axes_manager.signal_axes[0]
+        axis = self.axes_manager.signal_axes[0]
 
         if type(total_size) is float:
-            offset = self.axes_manager[-1].offset - self.axes_manager[-1].scale
-            total_size = int(round((total_size-offset)/eax.scale))
+            offset = axis.offset - axis.scale
+            total_size = int((total_size-offset)//axis.scale)
 
         if type(window_size) is float:
-            window_size = int(round(window_size/eax.scale))
+            window_size = int(window_size//axis.scale)
 
-        extrapolation_size = total_size-eax.size
+        extrapolation_size = total_size-axis.size
         if extrapolation_size < 0:
             raise AttributeError("total_size is less than spectral axis size")
 
@@ -584,7 +584,9 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                            **kwargs)
 
         if hanning:
-            spc.hanning_taper('both')
+            spc.hanning_taper('left', channels=10)
+            ncl = int(extrapolation_size//2)
+            spc.hanning_taper(side='right', channels=ncl)
 
         return spc
 
