@@ -274,15 +274,15 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
             # heuristics to predict offset
             offset_max = self.data[..., :10].mean(-1) / m.axis.scale
-            ZLP.background.map['values'] = offset_max*0.1
+            ZLP.background.map['values'] = offset_max * 0.1
             ZLP.background.map['is_set'] = True
 
-            # bounded fit is slower but more stable
+            # TODO: the fit bounding is not working?
             m.set_boundaries()
             bck.ext_force_positive = True
             bck.ext_bounded = True
-            bck._bounds = (0., offset_max.max())
-
+            bck._set_bmax(offset_max.max())
+            bck._set_bmin(0.)
             m.set_parameters_free(['ZeroLossPeak',], ['background',])
 
         return m
@@ -386,12 +386,11 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 carr = cfunc(zlp.axes_manager[-1].axis)
                 zlp = zlp / carr
 
-                # Correct compression in central part
-                clims = zlp.axes_manager[-1].axis[(carr - 0.9)<0.][[0,-1]]
-                zslice = zlp.isig[clims[0]:clims[1]]
-                sslice = self.isig[clims[0]:clims[1]]
-                this_ones = zslice.data < sslice.data
-                zslice.data[this_ones] = sslice.data[this_ones]
+                # Use experimental data within compression limits
+                clims = zlp.axes_manager[-1].axis[(carr - 0.95)<0.][[0, -1]]
+                zslice = zlp.isig[zlp_ini:clims[1]]
+                sslice = self.isig[zlp_ini:clims[1]]
+                zslice.data[:] = sslice.data[:]
 
             return zlp
 
