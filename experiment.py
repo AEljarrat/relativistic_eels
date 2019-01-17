@@ -243,7 +243,23 @@ def run_kka(Issd, Izlp, get_chi2_score=True, *args, **kwargs):
 def extract_ssd(spc, zlp, kwpad=None):
     """
     Perform Fourier-log deconvolution using a zlp model.
+
+    Parameters
+    ----------
+    spc : ModifiedEELS
+     The input EEL spectra
+    zlp : hyperspy model
+     Input for spc.model_zero_loss_peak
+    kwpad : {None, dictionary}
+     Optionally containing the input parameters for the pad. This is performed
+     using the power_law_extrapolation_until method.
+
+    Returns
+    -------
+    ssd, z : ModifiedEELS
+     Single scattering distribution and corresponding ZLP model.
     """
+
     zlp_threshold = float(zlp.axis.axis[zlp.channel_switches][-1])
     axis = spc.axes_manager[-1]
     ssd_range = (float(axis.scale), float(axis.high_value+axis.scale))
@@ -262,35 +278,67 @@ def extract_ssd(spc, zlp, kwpad=None):
     ssd.remove_negative_intensity()
     return ssd, z
 
-def process_ssd(ssd, z, left, right, hanning_width=None, kwpad=None, n=None):
+def process_ssd(ssd, left, right, hanning_width=None):
     """
-    Extracts the dielectric function if n is provided
+    Calculates the intensity offset from a region of the provided SSD and
+    removes it.
+
+    Parameters
+    ----------
+    left, right : float
+     Define the range in the signal axis units.
+    hanning_width : {None, float}
+     Optionally apply a hanning taper to the left side with the provided width.
+
+    Returns
+    -------
+    ssd, background : hyperspy Signals
+     The processed ssd and subtracted intensity background.
     """
 
-    axis = ssd.axes_manager[-1]
+    axis = ssd.axes_manager.signal_axes[0]
+    middle = left + (right-left) / 2.
+
+    background = ssd.isig[left:right].mean(-1)
+    int_middle = ssd.axes_manager[-1].value2index(middle)
+
+    ssd_p = ssd.__class__(ssd - background)
+    if hanning_width is not None:
+        ssd_p.hanning_taper('left', channels=hanning_width, offset=int_middle)
+
+    return ssd_p, background
+
+def calculate_eps(ssd, z, n, kwpad=None, background=None):
+    """
+    Calculates the dielectric function for the provided ZLP and refractive idx.
+
+    Parameters
+    ----------
+    ssd, z : ModifiedEELS
+     Single scattering distribution and zero-loss peak datasets.
+    n : float
+     Refractive index.
+
+    Returns
+    -------
+    eps, thickness: hyperspy Signals
+     The dielectric function and corresponding thickness.
+    """
+
+    axis = ssd.axes_manager.signal_axes[0]
     ssd_range = (float(axis.scale), float(axis.high_value+axis.scale))
 
-    emid = left + (right-left) / 2.
-    idx = ssd.axes_manager[-1].value2index(emid)
-
-    bck = ssd.isig[left:right].mean(-1)
-
-    ssd_h = ssd.__class__(ssd - bck)
-    if hanning_width is not None:
-        ssd_h.hanning_taper('left', channels=hanning_width, offset=idx)
-
-    Izlp = (z - bck).integrate1D(-1)
+    if background is not None:
+        Izlp = (z - background).integrate1D(-1)
+    else:
+        Izlp = z.integrate1D(-1)
 
     if kwpad is not None:
         # Pad the EELS spectra
-        ssd_h = ssd_h.power_law_extrapolation_until(**kwpad)
+        ssd_p = ssd.power_law_extrapolation_until(**kwpad)
 
-    if n is None:
-        ssd_h.crop_signal1D(*ssd_range)
-        return ssd_h
-    else:
-        elf_h, tkka = ssd_h.normalize_bulk_inelastic_scattering(Izlp, n=n)
-        eps_h = elf_h.kramers_kronig_transform(invert=True)
-        eps_h.crop(-1, *ssd_range)
-        ssd_h.crop_signal1D(*ssd_range)
-        return ssd_h, eps_h
+    elf, thickness = ssd_p.normalize_bulk_inelastic_scattering(Izlp, n=n)
+    eps = elf.kramers_kronig_transform(invert=True)
+    eps.crop(-1, *ssd_range)
+
+    return eps, thickness
