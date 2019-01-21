@@ -266,7 +266,8 @@ def extract_ssd(spc, zlp, kwpad=None):
 
     # Update ZLP model with appropriate size (expand and crop technique)
     z = spc.model_zero_loss_peak(threshold = zlp_threshold,
-                                 model     = zlp)
+                                 model     = zlp,
+                                 show_progressbar = False)
     ssd = spc.deepcopy()
     if kwpad is not None:
         # Pad the EELS spectra

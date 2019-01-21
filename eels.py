@@ -1205,7 +1205,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
             # Update ZLP model with appropriate size (expand and crop technique)
             z = eel.model_zero_loss_peak(threshold = zlp_threshold,
-                                         model     = zlp)
+                                         model     = zlp,
+                                         show_progressbar=False)
 
             if kwpad is not None:
                 # Pad the EELS spectra
