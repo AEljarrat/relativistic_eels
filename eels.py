@@ -1049,7 +1049,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                         n=None,
                                         t=None,
                                         delta=0.9,
-                                        fsmooth=None,
                                         iterations=20,
                                         chi2_target=1e-4,
                                         average=False,
@@ -1104,10 +1103,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             in order to improve stability. Can be None, if no limit is desired.
             A value of around 0.9 ensures the correction is never larger than
             the original EELS signal, producing a negative spectral region.
-        fsmooth : {None, float}
-            Optionally apply a gaussian filter to the relativistic correction
-            in order to eliminate high-frequency noise. The cut-off is set in
-            the energy-loss scale, e.g. fsmooth = 1.5 (eV).
         iterations: {None, int}
             Number of the iterations for the internal loop to remove the
             relativistic contribution. If None, the loop runs until a chi-square
