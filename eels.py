@@ -1157,9 +1157,6 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         if zlp_threshold is None:
             zlp_threshold  = float(zlp.axis.axis[zlp.channel_switches][-1])
 
-        # Calculate the ZLP intensity
-        Izlp = self.estimate_elastic_scattering_intensity(zlp_threshold)
-
         # EEL is updated separately
         eel = self.deepcopy()
 
@@ -1180,25 +1177,25 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                          model     = zlp,
                                          show_progressbar=False)
 
+            # Calculate the ZLP intensity
+            Izlp = z.integrate1D(-1)
+
+            # extract SSD using the Fourier-log deconvolution
             if kwpad is not None:
                 # Pad the EELS spectra
                 eel = eel.power_law_extrapolation_until(**kwpad)
-
-            # extract SSD using the Fourier-log deconvolution
             ssd = eel.fourier_log_deconvolution(z)
             del eel
             ssd.remove_negative_intensity(inplace=True)
             ssd.crop_signal1D(*ssd_range)
             ssd.data += 1e-6
 
-            # smooth the boundaries and optionally pad
+            # Normalize spectrum and Kramers-Kronig transform
             if kwpad is not None:
                 ssd = ssd.power_law_extrapolation_until(**kwpad)
             else:
                 ssd.hanning_taper('both')
-
-            # Normalize spectrum and Kramers-Kronig transform
-            ssd, tkka = ssd.normalize_bulk_inelastic_scattering(Izlp,n=n,t=t)
+            ssd, tkka = ssd.normalize_bulk_inelastic_scattering(Izlp, n=n, t=t)
             eps = ssd.kramers_kronig_transform(invert=True)
             eps.crop(-1, *ssd_range)
             del ssd
