@@ -257,11 +257,14 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         ZLP = ZeroLossPeak()
         m.append(ZLP)
         m.set_parameters_value('FWHM', 0.2)
-        m.set_parameters_value('area', 1.)
         m.set_parameters_value('gamma', 0.05)
+        m.set_parameters_value('area', 1.)
         m.set_parameters_value('centre', 0.)
         m.set_parameters_value('non_isochromaticity', 0.1)
         m.set_parameters_free(['ZeroLossPeak',], ['non_isochromaticity',])
+
+        # TODO: improve estimate area
+        ZLP.area.map['values'] = self.estimate_elastic_scattering_intensity(1.)
 
         if compression:
             # sets a compression filter for the most intense part of the ZLP
