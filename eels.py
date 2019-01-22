@@ -602,29 +602,26 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         Parameters
         ----------
         zlp: {None, number, ndarray, Signal}
-            ZLP intensity. It is optional (can be None) if t is given,
-            full_output is False and no iterations are run. In any other case,
-            the ZLP is required either to perform the normalization step,
-            to calculate the thickness and/or to calculate the relativistic
-            correction.
+         Optionally provide the ZLP intensity, that is in principle needed for
+         normalization of the inelastic scattering distribution and to calculate
+         the absolute thickness value.
         n: {None, number, ndarray, Signal}
-            The medium refractive index. Used for normalization of the
-            SSD to obtain the energy loss function. If given the thickness
-            is estimated and returned. It is only required when `t` is None.
+         Optionally provide the refractive index of the medium. If provided, the
+         thickness parameter `t` should be None, or else an error is raised.
         t: {None, number, ndarray, Signal}
-            The sample thickness in nm. Used for normalization of the
-            SSD to obtain the energy loss function. It is only required when
-            `n` is None.
+         Optionally provide the sample thickness, in nm. If provided, the
+         refractive index parameter `n` should be None, or else an error is
+         raised.
 
         Returns
         -------
         elf: ModifiedEELS
-            The imaginary part of the inverse dielectric function, also known as
-            energy-loss function.
+         The imaginary part of the inverse dielectric function, also known as
+         energy-loss function.
         t : Signal
-            The thickness, estimated from the refractive index in case this was
-            provided. In case the thickness was already provided, we have made
-            sure to adapt the navigation dimensions of the input signals.
+         The thickness, estimated from the refractive index in case this was
+         provided. In case the thickness was already provided, we have made sure
+         to adapt the navigation dimensions of the input signals.
         """
 
         # create energy-loss axis
@@ -1052,97 +1049,74 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                                         iterations=20,
                                         chi2_target=1e-4,
                                         average=False,
-                                        show_progressbar=None,
-                                        kwpad=None,
                                         ssd_threshold=None,
                                         zlp_threshold=None,
+                                        kwpad=None,
+                                        show_progressbar=None,
                                         *args,
                                         **kwargs):
-        r"""Calculate the complex dielectric function from a single scattering
-        distribution (SSD) using the Kramers-Kronig relations and a relativistic
+        r"""Calculate the complex dielectric function from a low-loss EELS
+        dataset, using the the Kramers-Kronig relations and a relativistic
         correction for thin slab geometry.
 
-        The input SSD should be and EELSSpectrum instance, containing only
-        inelastic scattering information (elastic and plural scattering
-        deconvolved). The dielectric information is obtained by normalization of
-        the inelastic scattering using the elastic scattering intensity and
-        either refractive index or thickness information.
-
-        A full complex dielectric function (CDF) is obtained by Kramers-Kronig
-        transform, solved using FFT as in `kramers_kronig_analysis`. This inital
-        guess for the CDF is improved in an iterative loop, devised to
-        approximately subtract the relativistic contribution supposing an
-        unoxidized planar surface.
-
-        The loop runs until a chi-square target has been achieved or for a
-        maximum number of iterations. This behavior can be modified using the
-        parameters below. This method does not account for instrumental and
-        finite-size effects.
-
-        Note: either refractive index or thickness (`n` or `t`) are required.
-        If both are None or if both are provided an exception is raised. Many
-        input types are accepted for zlp, n and t parameters, which are parsed
-        using `self._check_adapt_map_input`, see the documentation therein for
-        more information.
+        The input dataset should contain most of the elastic and inelastic
+        scattering distributions. A zero-loss peak model is used to remove and
+        include the elastic scattering distribution from the estimations. This
+        process is mostly automated but can be controlled by providing a custom
+        zero-loss peak model using the `zlp` parameter. Finer control is also
+        possible, for more information see parameter list.
 
         Parameters
         ----------
         zlp: EELSModel
-            ZLP model containing a ZeroLossPeak component to fit the zlp. It can
-            be obtained by using the model_zero_loss_peak method.
+         ZLP model containing a ZeroLossPeak component to fit the zlp. It can be
+         obtained by using the `model_zero_loss_peak` method.
         n: {None, number, ndarray, Signal}
-            The medium refractive index. Used for normalization of the
-            SSD to obtain the energy loss function. If given the thickness
-            is estimated and returned. It is only required when `t` is None.
+         The medium refractive index. Used for normalization of the SSD to
+         obtain the energy loss function. It is only required when `t` is None.
         t: {None, number, ndarray, Signal}
-            The sample thickness in nm. Used for normalization of the
-            SSD to obtain the energy loss function. It is only required when
-            `n` is None.
+         The sample thickness in nm. Used for normalization of the SSD to obtain
+         the energy loss function. It is only required when `n` is None.
         delta : {None, float}
-            Optionally apply a fractional limit to the relativistic correction
-            in order to improve stability. Can be None, if no limit is desired.
-            A value of around 0.9 ensures the correction is never larger than
-            the original EELS signal, producing a negative spectral region.
+         Optionally apply a fractional limit to the relativistic correction in
+         order to improve stability. Can be None, if no limit is desired. A
+         value of around 0.9 ensures the correction is never larger than the
+         original EELS signal, producing a negative spectral region.
         iterations: {None, int}
-            Number of the iterations for the internal loop to remove the
-            relativistic contribution. If None, the loop runs until a chi-square
-            target has been achieved (see below).
+         Number of the iterations for the internal loop to remove the
+         relativistic contribution. If None, the loop runs until a chi-square
+         target has been achieved (see below).
         chi2_target : float
-            The average chi-square test score is measured in each iteration, and
-            the reconstruction loop terminates when the target score is reached.
-            See `_chi2_score` for more information.
+         The average chi-square test score is measured in each iteration, and
+         the reconstruction loop terminates when the target score is reached.
+         See `_chi2_score` for more information.
         average : bool
-            If True, use the average of the obtained dielectric functions over
-            the navigation dimensions to calculate the relativistic correction.
-            False by default, should only be used when analyzing spectra from a
-            homogenous sample, as only one dielectric function is retrieved.
-            This switch has no effect if only one spectrum is being analyzed.
-        kwpad : {None, dictionary}
-            Optional paramater. A dictionary with key-word arguments for the
-            power_law_extrapolation method. If provided, this method will be
-            used to extend the high-energy tail of the spectra. In most cases,
-            this padding is necessary to obtain correct Fourier transforms.
+         If True, use the average of the obtained dielectric functions over
+         the navigation dimensions to calculate the relativistic correction.
+         False by default, should only be used when analyzing spectra from a
+         homogenous sample, as only one dielectric function is retrieved. This
+         switch has no effect if only one spectrum is being analyzed.
         ssd_threshold : {None, float}
-            Optionally, crop the single scattering distribution prior to
-            normalization using this value as a lower boundary. By default, the
-            full spectra starting from the first positive channel are used.
+         Optionally, crop the single scattering distribution prior to
+         normalization using this value as a lower boundary. By default, the
+         full spectra starting from the first positive channel are used.
         zlp_threshold : {None, float}
-            Optionally, provide the upper boundary for the ZLP fit. This fit is
-            performed using the model_zero_loss_peak method. By default, the fit
-            range is set simetrically around the ZLP using the first channel as
-            lower boundary.
+         Optionally, provide the upper boundary for the ZLP fit. This fit is
+         performed using the model_zero_loss_peak method. By default, the fit
+         range is set simetrically around the ZLP using the first channel as
+         lower boundary.
+        kwpad : {None, dictionary}
+         Optional paramater. A dictionary with key-word arguments for the
+         `power_law_extrapolation` method. If provided, this method will be
+         used to extend the high-energy tail of the spectra. In most cases, this
+         padding is necessary to obtain correct Fourier transforms.
 
         Returns
         -------
-        eps: DielectricFunction instance
-            The complex dielectric function results,
-
-                .. math::
-                    \epsilon = \epsilon_1 + i*\epsilon_2,
-
-            contained in an DielectricFunction instance.
-        output: Dictionary (optional)
-            A dictionary of optional outputs with the following keys:
+        eps: ModifiedCDF
+         The complex dielectric function resulting from the analysis.
+        output: Dictionary
+         A dictionary of outputs with the following keys:
 
             ``thickness``
                 The estimated thickness in nm calculated by normalization of
@@ -1161,7 +1135,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         See also
         --------
-        get_relativistic_spectrum, _check_adapt_map_input
+        power_law_extrapolation_until, get_relativistic_spectrum,
+        _check_adapt_map_input, normalize_bulk_inelastic_scattering,
+        kramers_kronig_transform
+
 
         """
 
