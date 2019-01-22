@@ -1285,7 +1285,8 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                     #chi2 = ((scorr.data-smemory)**2/smemory**2).sum()
                     chi2 = smemory._chi2_score(scorr)
                     chi2str = '{:0.2e}'.format(chi2)
-                    pbar.set_description(chi2str)
+                    if show_progressbar:
+                        pbar.set_description(chi2str)
                 smemory = scorr.deepcopy()
             io += 1
             pbar.update(1)
