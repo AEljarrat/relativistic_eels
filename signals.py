@@ -372,6 +372,7 @@ class SignalMixin(BaseSignal):
 
         if inplace:
             s = self
+            s -= offset
         else:
             s = self.__class__(self - offset)
 
