@@ -328,6 +328,53 @@ class SignalMixin(BaseSignal):
          (slice(None),) * eax.index_in_array + (slice(i1, i2),Ellipsis)] = value
         if not inplace: return spc
 
+    def remove_offset(self, left, right, hanning_width=None, inplace=True,
+                      offset=None):
+        """
+        Calculates the intensity offset from a provided region of the Signal and
+        removes it by subtraction, optionally applying a hanning taper.
+
+        Parameters
+        ----------
+        left, right : float
+         Define the range in the signal axis units.
+        hanning_width : {None, float}
+         Optionally apply a hanning taper to the left side with the provided
+         width.
+        inplace : bool
+         Controls wether the operation is performed in place or not.
+        offset : None,
+         This parameter overrides the calculation of the offset.
+
+        Returns
+        -------
+        s : SignalMixin
+         If inplace is False, the input signal without the offset.
+        """
+
+        axis = self.axes_manager.signal_axes[0]
+        middle = left + (right-left) / 2.
+
+        if offset is None:
+            offset = self.isig[left:right].mean(-1)
+        int_middle = self.axes_manager[-1].value2index(middle)
+
+        if inplace:
+            s = self
+        else:
+            s = self.__class__(self - offset)
+
+        if hanning_width is not None:
+            s.hanning_taper(
+                'left',
+                channels=hanning_width,
+                offset=int_middle
+            )
+
+        s.remove_negative_intensity()
+        if not inplace:
+            return s
+
     def expand_signal1D(self,left=None,right=None,inplace=True,value=0.):
         """
         Expand the signal dimension to the left and right. If the provided value

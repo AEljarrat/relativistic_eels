@@ -749,6 +749,100 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             cdf.data -= q[ids].real
         return cdf
 
+    def get_single_scattering_distribution(self, zlp, kwpad=None):
+        """
+        Extract the SSD by deconvolution of a zlp model from the EELS spectrum.
+
+        Parameters
+        ----------
+        zlp : hyperspy model
+         Input for `~.model_zero_loss_peak`
+        kwpad : {None, dictionary}
+         Optionally containing the input parameters for the pad. This is
+         performed using the `~.power_law_extrapolation_until` method. More
+         information in the docs therein.
+
+        Returns
+        -------
+        ssd : SingleScatteringDistribution
+         The deconvolved single scattering distribution signal.
+        z : ModifiedEELS
+         The deconvolved zero-loss peak signal.
+        """
+
+        zlp_threshold = float(zlp.axis.axis[zlp.channel_switches][-1])
+        axis = self.axes_manager[-1]
+        ssd_range = (float(axis.scale), float(axis.high_value+axis.scale))
+
+        # Update ZLP model with appropriate size (expand and crop technique)
+        z = self.model_zero_loss_peak(threshold = zlp_threshold,
+                                     model     = zlp,
+                                     show_progressbar = False)
+        ssd = self.deepcopy()
+        if kwpad is not None:
+            # Pad the EELS spectra
+            ssd = ssd.power_law_extrapolation_until(**kwpad)
+
+        # extract SSD using the Fourier-log deconvolution
+        ssd = ssd.fourier_log_deconvolution(z)
+        ssd.remove_negative_intensity()
+        if kwpad is not None:
+            ssd.crop_signal1D(*ssd_range)
+        ssd = SingleScatteringDistribution(ssd)
+        return ssd, z
+
+    def obtain_dielectric_function(self, z, n=None, t=None, kwpad=None,
+                                   background=None):
+        """
+        Calculates the dielectric function for the provided ZLP and
+        refractive index.
+
+        Parameters
+        ----------
+        z : hyperspy Signal
+         Containing the zero-loss peak, over an energy range as broad as
+         possible.
+        n, t : float, hyperspy Signal
+         Optionally provide either the refractive index or the thickness,
+         that are used for normalization of the SSD. In case both are
+         provided, ValueError is raised.
+        kwpad: dictionary
+         Optionally containing the input parameters for the pad. This is
+         performed using the `~.power_law_extrapolation_until` method. More
+         information in the docs therein.
+        background : {None, float, hyperspy Signal}
+         Optionally provide an intensity offset that is removed from the spectra
+         (also ZLP) prior to the other calculations.
+
+        Returns
+        -------
+        eps : ModifiedCDF
+         The dielectric function.
+        thickness: hyperspy Signals
+         The corresponding thickness.
+        """
+
+        axis = self.axes_manager.signal_axes[0]
+        ssd_range = (float(axis.scale), float(axis.high_value+axis.scale))
+
+        if background is not None:
+            Izlp = (z - background).integrate1D(-1)
+        else:
+            Izlp = z.integrate1D(-1)
+
+        if kwpad is not None:
+            # Pad the EELS spectra
+            ssd_p = self.power_law_extrapolation_until(**kwpad)
+
+        elf, thickness = ssd_p.normalize_bulk_inelastic_scattering(Izlp,
+                                                                   n=n,
+                                                                   t=t)
+        eps = elf.kramers_kronig_transform(invert=True)
+        eps.crop(-1, *ssd_range)
+
+        return eps, thickness
+
+
     def relativistic_kramers_kronig(self,
                                     zlp=None,
                                     n=None,
