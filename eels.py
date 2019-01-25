@@ -764,7 +764,7 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
 
         Returns
         -------
-        ssd : SingleScatteringDistribution
+        ssd : ModifiedEELS
          The deconvolved single scattering distribution signal.
         z : ModifiedEELS
          The deconvolved zero-loss peak signal.
@@ -788,11 +788,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
         ssd.remove_negative_intensity()
         if kwpad is not None:
             ssd.crop_signal1D(*ssd_range)
-        ssd = SingleScatteringDistribution(ssd)
         return ssd, z
 
-    def obtain_dielectric_function(self, z, n=None, t=None, kwpad=None,
-                                   background=None):
+    def get_dielectric_function(self, z, n=None, t=None, kwpad=None,
+                                background=None):
         """
         Calculates the dielectric function for the provided ZLP and
         refractive index.
