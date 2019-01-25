@@ -275,8 +275,9 @@ def extract_ssd(spc, zlp, kwpad=None):
 
     # extract SSD using the Fourier-log deconvolution
     ssd = ssd.fourier_log_deconvolution(z)
-    ssd.crop_signal1D(*ssd_range)
     ssd.remove_negative_intensity()
+    if kwpad is not None:
+        ssd.crop_signal1D(*ssd_range)
     return ssd, z
 
 def process_ssd(ssd, left, right, hanning_width=None):
@@ -307,6 +308,7 @@ def process_ssd(ssd, left, right, hanning_width=None):
     if hanning_width is not None:
         ssd_p.hanning_taper('left', channels=hanning_width, offset=int_middle)
 
+    ssd_p.remove_negative_intensity()
     return ssd_p, background
 
 def calculate_eps(ssd, z, n, kwpad=None, background=None):

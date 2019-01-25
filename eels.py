@@ -1190,7 +1190,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
             ssd = eel.fourier_log_deconvolution(z)
             del eel
             ssd.remove_negative_intensity(inplace=True)
-            ssd.crop_signal1D(*ssd_range)
+            if kwpad is not None:
+                ssd.crop_signal1D(*ssd_range)
+            else:
+                ssd.crop_signal1D(ssd_range[0], None)
             ssd.data += 1e-6
 
             # Normalize spectrum and Kramers-Kronig transform
@@ -1200,7 +1203,10 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 ssd.hanning_taper('both')
             ssd, tkka = ssd.normalize_bulk_inelastic_scattering(Izlp, n=n, t=t)
             eps = ssd.kramers_kronig_transform(invert=True)
-            eps.crop(-1, *ssd_range)
+            if kwpad is not None:
+                eps.crop(-1, *ssd_range)
+            else:
+                eps.crop(-1, ssd_range[0], None)
             del ssd
 
             # Apply averaging if needed
@@ -1223,22 +1229,24 @@ class ModifiedEELS(hs.signals.EELSSpectrum, SignalMixin):
                 # Fourier-exp convolution with the current ZLP model...
                 # ... uses the expand technique and optional PLaw padding
                 # ...for the SSD
-                ssd.expand_signal1D(*eel_range, inplace=True)
+                ssd.expand_signal1D(eel_range[0], None, inplace=True)
                 if kwpad is not None:
                     ssd = ssd.power_law_extrapolation_until(**kwpad)
                 else:
                     ssd.hanning_taper('both')
                 ssd = ssd.fourier_exp_convolution(z)
-                ssd.crop_signal1D(*eel_range)
+                if kwpad is not None:
+                    ssd.crop_signal1D(*eel_range)
 
                 # ... for the ELF
-                elf.expand_signal1D(*eel_range, inplace=True)
+                elf.expand_signal1D(eel_range[0], None, inplace=True)
                 if kwpad is not None:
                     elf = elf.power_law_extrapolation_until(**kwpad)
                 else:
                     elf.hanning_taper('both')
                 elf = elf.fourier_exp_convolution(z)
-                elf.crop_signal1D(*eel_range)
+                if kwpad is not None:
+                    elf.crop_signal1D(*eel_range)
 
                 # calculate correction
                 scorr = ssd - elf
