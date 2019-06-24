@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 
 from matplotlib import legend as legend_mpl
 from hyperspy.signals import Signal1D, BaseSignal
+from hyperspy.roi import RectangularROI, SpanROI
+from hyperspy.interactive import interactive
 from hyperspy.drawing.signal1d import Signal1DLine
 from hyperspy.misc.utils import signal_range_from_roi
 
@@ -529,3 +531,55 @@ class SignalMixin(BaseSignal):
         else:
             aus = ValueError('Input '+type(ins)+' not recognized, ')
             return aus
+
+    def plot_signal_map(self, *args, **kwargs):
+        """
+        Nion-style signal plot with a map. The navigation image shows a
+        rectangle ROI that allows to average a region. This average is shown in
+        an interactively updated signal plot. Additionally, a span selector tool
+        allows to slice the signal range. This slice is interactively updated in
+        the navigation image.
+        """
+
+        # create an average signal image and plot it, that is plot no. 1
+        savg = self.mean(-1).T
+        savg.plot(*args, **kwargs)
+
+        # Put rectangular ROI in the average signal image
+        nav_axs = self.axes_manager.navigation_axes
+        xw = 0.25 * (nav_axs[0].high_value - nav_axs[0].low_value)
+        yw = 0.25 * (nav_axs[1].high_value - nav_axs[1].low_value)
+
+        roi_rect = RectangularROI(-xw, -yw, xw, yw)
+        s_rect = roi_rect.interactive(
+            signal = self,
+            navigation_signal = savg,
+        )
+
+        # calculate the average signal inside of the rectangular ROI
+        s_rect_avg = interactive(
+            f = s_rect.mean,
+            event = s_rect.axes_manager.events.any_axis_changed,
+            recompute_out_event=None,
+        )
+
+        # plot this average, that is plot no. 2
+        s_rect_avg.plot()
+
+        # Put a span ROI in the average signal plot
+        cax = self.axes_manager.signal_axes[0]
+        co = 0.5 * (cax.high_value - cax.low_value)
+        cw = 0.1 * cax.size * cax.scale
+        roi_span = SpanROI(co-cw, co+cw)
+        s_span = roi_span.interactive(
+            signal=self.T,
+            navigation_signal=s_rect_avg,
+        )
+
+        # Plot no. 1 updates with the span selector of plot no. 2
+        interactive(
+            f = s_span.mean,
+            event = s_span.axes_manager.events.any_axis_changed,
+            recompute_out_event=None,
+            out = savg,
+        )
