@@ -541,6 +541,9 @@ class SignalMixin(BaseSignal):
         the navigation image.
         """
 
+        # save references for clean-up later
+        fset = self.axes_manager.events.any_axis_changed.connected
+
         # create an average signal image and plot it, that is plot no. 1
         savg = self.mean(-1).T
         savg.plot(*args, **kwargs)
@@ -583,3 +586,16 @@ class SignalMixin(BaseSignal):
             recompute_out_event=None,
             out = savg,
         )
+
+        # this is the clean-up: remove the events created and close figures
+        fset = self.axes_manager.events.any_axis_changed.connected - fset
+
+        def _clean_up_on_close_up(evt):
+            for foo in fset:
+                self.axes_manager.events.any_axis_changed.disconnect(foo)
+            # close the image plot
+            if savg._plot.signal_plot:
+                savg._plot.signal_plot.close()
+
+        fig = s_rect_avg._plot.signal_plot.figure
+        fig.canvas.mpl_connect('close_event', _clean_up_on_close_up)
