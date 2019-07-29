@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 from matplotlib import legend as legend_mpl
 from hyperspy.signals import Signal1D, BaseSignal
-from hyperspy.roi import RectangularROI, SpanROI
+from hyperspy.roi import RectangularROI, SpanROI, Line2DROI
 from hyperspy.interactive import interactive
 from hyperspy.drawing.signal1d import Signal1DLine
 from hyperspy.misc.utils import signal_range_from_roi
@@ -538,7 +538,7 @@ class SignalMixin(BaseSignal):
         rectangle ROI that allows to average a region. This average is shown in
         an interactively updated signal plot. Additionally, a span selector tool
         allows to slice the signal range. This slice is interactively updated in
-        the navigation image.
+        the navigation image. NaN values are in principle ignored.
         """
 
         # save references for clean-up later
@@ -561,7 +561,7 @@ class SignalMixin(BaseSignal):
 
         # calculate the average signal inside of the rectangular ROI
         s_rect_avg = interactive(
-            f = s_rect.mean,
+            f = s_rect.nanmean,
             event = s_rect.axes_manager.events.any_axis_changed,
             recompute_out_event=None,
         )
@@ -581,7 +581,7 @@ class SignalMixin(BaseSignal):
 
         # Plot no. 1 updates with the span selector of plot no. 2
         interactive(
-            f = s_span.mean,
+            f = s_span.nanmean,
             event = s_span.axes_manager.events.any_axis_changed,
             recompute_out_event=None,
             out = savg,
@@ -598,4 +598,77 @@ class SignalMixin(BaseSignal):
                 savg._plot.signal_plot.close()
 
         fig = s_rect_avg._plot.signal_plot.figure
+        fig.canvas.mpl_connect('close_event', _clean_up_on_close_up)
+
+    def plot_signal_line(self, *args, **kwargs):
+        """
+        Nion-style signal plot with a line. The navigation image shows a
+        line ROI that allows to average a region. This average is shown in
+        an interactively updated signal plot. Additionally, a span selector tool
+        allows to slice the signal range. This slice is interactively updated in
+        the navigation image. NaN values are in principle ignored.
+        """
+
+        # save references for clean-up later
+        fset = self.axes_manager.events.any_axis_changed.connected
+
+        # create an average signal image and plot it, that is plot no. 1
+        savg = self.mean(-1).T
+        savg.plot(*args, **kwargs)
+
+        # Put line ROI in the average signal image
+        nav_axs = self.axes_manager.navigation_axes
+        x0 = 0.5 * (nav_axs[0].high_value + nav_axs[0].low_value)
+        y0 = 0.5 * (nav_axs[1].high_value + nav_axs[1].low_value)
+        x1 = x0 - nav_axs[0].scale * nav_axs[0].size * 0.25
+        y1 = y0 - nav_axs[1].scale * nav_axs[1].size * 0.25
+        x2 = x0 + nav_axs[0].scale * nav_axs[0].size * 0.25
+        y2 = y0 + nav_axs[1].scale * nav_axs[1].size * 0.25
+        lw = nav_axs[1].scale * nav_axs[1].size * 0.25
+
+        roi_line = Line2DROI(x1, y1, x2, y2, linewidth=lw)
+        s_line = roi_line.interactive(
+            signal = self,
+            navigation_signal = savg,
+        )
+
+        # calculate the average signal inside of the line ROI
+        s_line_avg = interactive(
+            f = s_line.nanmean,
+            event = roi_line.events.changed, #s_line.axes_manager.events.any_axis_changed,
+            recompute_out_event=None,
+        )
+
+        # plot this average, that is plot no. 2
+        s_line_avg.plot()
+
+        # Put a span ROI in the average signal plot
+        cax = self.axes_manager.signal_axes[0]
+        co = 0.5 * (cax.high_value - cax.low_value)
+        cw = 0.1 * cax.size * cax.scale
+        roi_span = SpanROI(co-cw, co+cw)
+        s_span = roi_span.interactive(
+            signal=self.T,
+            navigation_signal=s_line_avg,
+        )
+
+        # Plot no. 1 updates with the span selector of plot no. 2
+        interactive(
+            f = s_span.nanmean,
+            event = s_span.axes_manager.events.any_axis_changed,
+            recompute_out_event=None,
+            out = savg,
+        )
+
+        # this is the clean-up: remove the events created and close figures
+        fset = self.axes_manager.events.any_axis_changed.connected - fset
+
+        def _clean_up_on_close_up(evt):
+            for foo in fset:
+                self.axes_manager.events.any_axis_changed.disconnect(foo)
+            # close the image plot
+            if savg._plot.signal_plot:
+                savg._plot.signal_plot.close()
+
+        fig = s_line_avg._plot.signal_plot.figure
         fig.canvas.mpl_connect('close_event', _clean_up_on_close_up)
